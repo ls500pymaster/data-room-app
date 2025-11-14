@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "dataroom"
+version = "0.1.0"
+description = "FastAPI backend for MVP Data Room"
+authors = ["Aleksandr", "94639744+ls500pymaster@users.noreply.github.com"]
+package-mode = false
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "0.115.2"
+pydantic = "^2.9.0"
+sqlalchemy = "^2.0.30"
+alembic = "^1.15"
+uvicorn = { extras = ["standard"], version = "^0.30.1" }
+python-dotenv = "^1.0.1"
+asyncpg = "^0.29.0"
+email-validator = "^2.2.0"
+google-auth = "^2.27.0"
+google-auth-oauthlib = "^1.2.0"
+google-auth-httplib2 = "^0.2.0"
+google-api-python-client = "^2.110.0"
+requests = "^2.31.0"
+bcrypt = "^4.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+httpx = "^0.27.0"
