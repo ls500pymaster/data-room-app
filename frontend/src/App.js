@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer } from 'react';
 import './App.css';
 import Auth from './components/Auth';
 import { filesApi } from './api/files';
@@ -17,107 +17,229 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
+// Initial state
+const initialState = {
+  currentUser: null,
+  importedFiles: [],
+  importedLoading: false,
+  driveFiles: [],
+  driveNextPageToken: null,
+  driveLoading: false,
+  selectedDriveIds: [],
+  importing: false,
+  deleting: {},
+  deleteConfirm: null,
+  message: null,
+  error: null,
+  healthStatus: null,
+};
+
+// Action types
+const ActionTypes = {
+  SET_USER: 'SET_USER',
+  SET_IMPORTED_FILES: 'SET_IMPORTED_FILES',
+  SET_IMPORTED_LOADING: 'SET_IMPORTED_LOADING',
+  SET_DRIVE_FILES: 'SET_DRIVE_FILES',
+  APPEND_DRIVE_FILES: 'APPEND_DRIVE_FILES',
+  SET_DRIVE_NEXT_PAGE_TOKEN: 'SET_DRIVE_NEXT_PAGE_TOKEN',
+  SET_DRIVE_LOADING: 'SET_DRIVE_LOADING',
+  TOGGLE_DRIVE_SELECTION: 'TOGGLE_DRIVE_SELECTION',
+  CLEAR_DRIVE_SELECTION: 'CLEAR_DRIVE_SELECTION',
+  SET_IMPORTING: 'SET_IMPORTING',
+  SET_DELETING: 'SET_DELETING',
+  REMOVE_DELETING: 'REMOVE_DELETING',
+  SET_DELETE_CONFIRM: 'SET_DELETE_CONFIRM',
+  CLEAR_DELETE_CONFIRM: 'CLEAR_DELETE_CONFIRM',
+  SET_MESSAGE: 'SET_MESSAGE',
+  CLEAR_MESSAGE: 'CLEAR_MESSAGE',
+  SET_ERROR: 'SET_ERROR',
+  CLEAR_ERROR: 'CLEAR_ERROR',
+  SET_HEALTH_STATUS: 'SET_HEALTH_STATUS',
+  RESET_ON_LOGOUT: 'RESET_ON_LOGOUT',
+  REMOVE_DRIVE_FILES: 'REMOVE_DRIVE_FILES',
+};
+
+// Reducer
+const appReducer = (state, action) => {
+  switch (action.type) {
+    case ActionTypes.SET_USER:
+      return { ...state, currentUser: action.payload };
+    
+    case ActionTypes.SET_IMPORTED_FILES:
+      return { ...state, importedFiles: action.payload };
+    
+    case ActionTypes.SET_IMPORTED_LOADING:
+      return { ...state, importedLoading: action.payload };
+    
+    case ActionTypes.SET_DRIVE_FILES:
+      return { ...state, driveFiles: action.payload };
+    
+    case ActionTypes.APPEND_DRIVE_FILES:
+      return { ...state, driveFiles: [...state.driveFiles, ...action.payload] };
+    
+    case ActionTypes.SET_DRIVE_NEXT_PAGE_TOKEN:
+      return { ...state, driveNextPageToken: action.payload };
+    
+    case ActionTypes.SET_DRIVE_LOADING:
+      return { ...state, driveLoading: action.payload };
+    
+    case ActionTypes.TOGGLE_DRIVE_SELECTION:
+      return {
+        ...state,
+        selectedDriveIds: state.selectedDriveIds.includes(action.payload)
+          ? state.selectedDriveIds.filter((id) => id !== action.payload)
+          : [...state.selectedDriveIds, action.payload],
+      };
+    
+    case ActionTypes.CLEAR_DRIVE_SELECTION:
+      return { ...state, selectedDriveIds: [] };
+    
+    case ActionTypes.SET_IMPORTING:
+      return { ...state, importing: action.payload };
+    
+    case ActionTypes.SET_DELETING:
+      return {
+        ...state,
+        deleting: { ...state.deleting, [action.payload]: true },
+      };
+    
+    case ActionTypes.REMOVE_DELETING:
+      return {
+        ...state,
+        deleting: Object.fromEntries(
+          Object.entries(state.deleting).filter(([key]) => key !== action.payload)
+        ),
+      };
+    
+    case ActionTypes.SET_DELETE_CONFIRM:
+      return { ...state, deleteConfirm: action.payload };
+    
+    case ActionTypes.CLEAR_DELETE_CONFIRM:
+      return { ...state, deleteConfirm: null };
+    
+    case ActionTypes.SET_MESSAGE:
+      return { ...state, message: action.payload };
+    
+    case ActionTypes.CLEAR_MESSAGE:
+      return { ...state, message: null };
+    
+    case ActionTypes.SET_ERROR:
+      return { ...state, error: action.payload };
+    
+    case ActionTypes.CLEAR_ERROR:
+      return { ...state, error: null };
+    
+    case ActionTypes.SET_HEALTH_STATUS:
+      return { ...state, healthStatus: action.payload };
+    
+    case ActionTypes.REMOVE_DRIVE_FILES:
+      return {
+        ...state,
+        driveFiles: state.driveFiles.filter(
+          (file) => !action.payload.includes(file.id)
+        ),
+      };
+    
+    case ActionTypes.RESET_ON_LOGOUT:
+      return {
+        ...initialState,
+        currentUser: null,
+        healthStatus: state.healthStatus,
+      };
+    
+    default:
+      return state;
+  }
+};
+
 function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [importedFiles, setImportedFiles] = useState([]);
-  const [importedLoading, setImportedLoading] = useState(false);
-  const [driveFiles, setDriveFiles] = useState([]);
-  const [driveNextPageToken, setDriveNextPageToken] = useState(null);
-  const [driveLoading, setDriveLoading] = useState(false);
-  const [selectedDriveIds, setSelectedDriveIds] = useState([]);
-  const [importing, setImporting] = useState(false);
-  const [deleting, setDeleting] = useState({});
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [message, setMessage] = useState(null);
-  const [error, setError] = useState(null);
-  const [healthStatus, setHealthStatus] = useState(null);
+  const [state, dispatch] = useReducer(appReducer, initialState);
 
   const checkHealth = useCallback(async () => {
     try {
       const response = await fetch(`${API_URL}/api/health`);
       const data = await response.json();
-      setHealthStatus(`Backend status: ${data.status}`);
+      dispatch({ type: ActionTypes.SET_HEALTH_STATUS, payload: `Backend status: ${data.status}` });
     } catch (err) {
-      setHealthStatus(`Backend error: ${err.message}`);
+      dispatch({ type: ActionTypes.SET_HEALTH_STATUS, payload: `Backend error: ${err.message}` });
     }
   }, []);
 
   const fetchImportedFiles = useCallback(async () => {
-    if (!currentUser) {
-      setImportedFiles([]);
+    if (!state.currentUser) {
+      dispatch({ type: ActionTypes.SET_IMPORTED_FILES, payload: [] });
       return;
     }
 
-    setImportedLoading(true);
+    dispatch({ type: ActionTypes.SET_IMPORTED_LOADING, payload: true });
     try {
       const data = await filesApi.listImported();
-      setImportedFiles(data);
+      dispatch({ type: ActionTypes.SET_IMPORTED_FILES, payload: data });
     } catch (err) {
-      setError(err.message);
+      dispatch({ type: ActionTypes.SET_ERROR, payload: err.message });
     } finally {
-      setImportedLoading(false);
+      dispatch({ type: ActionTypes.SET_IMPORTED_LOADING, payload: false });
     }
-  }, [currentUser]);
+  }, [state.currentUser]);
 
   useEffect(() => {
-    if (currentUser) {
+    if (state.currentUser) {
       fetchImportedFiles();
     } else {
-      setImportedFiles([]);
-      setDriveFiles([]);
-      setSelectedDriveIds([]);
-      setDriveNextPageToken(null);
+      dispatch({ type: ActionTypes.RESET_ON_LOGOUT });
     }
-  }, [currentUser, fetchImportedFiles]);
+  }, [state.currentUser, fetchImportedFiles]);
 
   const handleAuthChange = useCallback((user) => {
-    setCurrentUser(user);
+    dispatch({ type: ActionTypes.SET_USER, payload: user });
   }, []);
 
   const loadDriveFiles = useCallback(
     async ({ loadMore = false } = {}) => {
-      if (!currentUser) {
-        setError('Please sign in to view Google Drive');
+      if (!state.currentUser) {
+        dispatch({ type: ActionTypes.SET_ERROR, payload: 'Please sign in to view Google Drive' });
         return;
       }
-      if (loadMore && !driveNextPageToken) {
+      if (loadMore && !state.driveNextPageToken) {
         return;
       }
 
-      setDriveLoading(true);
-      setError(null);
+      dispatch({ type: ActionTypes.SET_DRIVE_LOADING, payload: true });
+      dispatch({ type: ActionTypes.CLEAR_ERROR });
       try {
         const data = await filesApi.listDriveFiles({
           pageSize: 20,
-          pageToken: loadMore ? driveNextPageToken : undefined,
+          pageToken: loadMore ? state.driveNextPageToken : undefined,
         });
-        setDriveNextPageToken(data.next_page_token || null);
-        setDriveFiles((prev) => (loadMore ? [...prev, ...data.files] : data.files));
+        dispatch({ type: ActionTypes.SET_DRIVE_NEXT_PAGE_TOKEN, payload: data.next_page_token || null });
+        if (loadMore) {
+          dispatch({ type: ActionTypes.APPEND_DRIVE_FILES, payload: data.files });
+        } else {
+          dispatch({ type: ActionTypes.SET_DRIVE_FILES, payload: data.files });
+        }
       } catch (err) {
-        setError(err.message);
+        dispatch({ type: ActionTypes.SET_ERROR, payload: err.message });
       } finally {
-        setDriveLoading(false);
+        dispatch({ type: ActionTypes.SET_DRIVE_LOADING, payload: false });
       }
     },
-    [currentUser, driveNextPageToken]
+    [state.currentUser, state.driveNextPageToken]
   );
 
   const toggleDriveSelection = useCallback((fileId) => {
-    setSelectedDriveIds((prev) =>
-      prev.includes(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId]
-    );
+    dispatch({ type: ActionTypes.TOGGLE_DRIVE_SELECTION, payload: fileId });
   }, []);
 
   const handleImportSelected = useCallback(async () => {
-    if (!selectedDriveIds.length) {
-      setError('Please select at least one file to import');
+    if (!state.selectedDriveIds.length) {
+      dispatch({ type: ActionTypes.SET_ERROR, payload: 'Please select at least one file to import' });
       return;
     }
-    setImporting(true);
-    setMessage(null);
-    setError(null);
+    dispatch({ type: ActionTypes.SET_IMPORTING, payload: true });
+    dispatch({ type: ActionTypes.CLEAR_MESSAGE });
+    dispatch({ type: ActionTypes.CLEAR_ERROR });
     try {
-      const result = await filesApi.importFiles(selectedDriveIds);
+      const result = await filesApi.importFiles(state.selectedDriveIds);
       const importedCount = result.imported.length;
       const skippedCount = result.skipped.length;
       const failedCount = result.failed.length;
@@ -130,58 +252,55 @@ function App() {
       // Show error details if any
       if (result.failed && result.failed.length > 0) {
         const errorDetails = result.failed.map(f => `${f.file_id}: ${f.error}`).join('; ');
-        setError(`Import errors: ${errorDetails}`);
+        dispatch({ type: ActionTypes.SET_ERROR, payload: `Import errors: ${errorDetails}` });
       } else {
-        setMessage(summaryParts.join(' · ') || 'Import completed');
+        dispatch({ type: ActionTypes.SET_MESSAGE, payload: summaryParts.join(' · ') || 'Import completed' });
       }
 
       if (importedCount) {
         await fetchImportedFiles();
         // Remove imported files from Drive list
-        setDriveFiles((prev) => prev.filter((file) => !result.imported.find((f) => f.drive_file_id === file.id)));
+        const importedDriveIds = result.imported.map(f => f.drive_file_id);
+        dispatch({ type: ActionTypes.REMOVE_DRIVE_FILES, payload: importedDriveIds });
       }
-      setSelectedDriveIds([]);
+      dispatch({ type: ActionTypes.CLEAR_DRIVE_SELECTION });
     } catch (err) {
-      setError(err.message);
+      dispatch({ type: ActionTypes.SET_ERROR, payload: err.message });
     } finally {
-      setImporting(false);
+      dispatch({ type: ActionTypes.SET_IMPORTING, payload: false });
     }
-  }, [selectedDriveIds, fetchImportedFiles]);
+  }, [state.selectedDriveIds, fetchImportedFiles]);
 
   const handleDeleteClick = useCallback((fileId, fileName) => {
-    setDeleteConfirm({ fileId, fileName });
+    dispatch({ type: ActionTypes.SET_DELETE_CONFIRM, payload: { fileId, fileName } });
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteConfirm) return;
+    if (!state.deleteConfirm) return;
 
-    const { fileId } = deleteConfirm;
-    setDeleting((prev) => ({ ...prev, [fileId]: true }));
-    setError(null);
-    setDeleteConfirm(null);
+    const { fileId } = state.deleteConfirm;
+    dispatch({ type: ActionTypes.SET_DELETING, payload: fileId });
+    dispatch({ type: ActionTypes.CLEAR_ERROR });
+    dispatch({ type: ActionTypes.CLEAR_DELETE_CONFIRM });
     
     try {
       await filesApi.deleteFile(fileId);
-      setMessage('File deleted successfully');
+      dispatch({ type: ActionTypes.SET_MESSAGE, payload: 'File deleted successfully' });
       await fetchImportedFiles();
     } catch (err) {
-      setError(`Error deleting file: ${err.message}`);
+      dispatch({ type: ActionTypes.SET_ERROR, payload: `Error deleting file: ${err.message}` });
     } finally {
-      setDeleting((prev) => {
-        const next = { ...prev };
-        delete next[fileId];
-        return next;
-      });
+      dispatch({ type: ActionTypes.REMOVE_DELETING, payload: fileId });
     }
-  }, [deleteConfirm, fetchImportedFiles]);
+  }, [state.deleteConfirm, fetchImportedFiles]);
 
   const handleDeleteCancel = useCallback(() => {
-    setDeleteConfirm(null);
+    dispatch({ type: ActionTypes.CLEAR_DELETE_CONFIRM });
   }, []);
 
   const isDriveSelectionDisabled = useMemo(
-    () => !currentUser || driveLoading || importing,
-    [currentUser, driveLoading, importing]
+    () => !state.currentUser || state.driveLoading || state.importing,
+    [state.currentUser, state.driveLoading, state.importing]
   );
 
   return (
@@ -196,28 +315,28 @@ function App() {
             <button onClick={checkHealth} className="secondary-button">
               Check backend
             </button>
-            {healthStatus && <span className="hint-text">{healthStatus}</span>}
+            {state.healthStatus && <span className="hint-text">{state.healthStatus}</span>}
           </div>
         </div>
         <Auth onAuthChange={handleAuthChange} />
       </header>
 
-      {!currentUser ? (
+      {!state.currentUser ? (
         <div className="unauthorized-placeholder">
           <p>Sign in with Google to view and import files.</p>
         </div>
       ) : (
         <main className="app-content">
-          {(message || error) && (
+          {(state.message || state.error) && (
             <div className="alerts">
-              {message && (
-                <div className="alert alert-success" onClick={() => setMessage(null)}>
-                  {message}
+              {state.message && (
+                <div className="alert alert-success" onClick={() => dispatch({ type: ActionTypes.CLEAR_MESSAGE })}>
+                  {state.message}
                 </div>
               )}
-              {error && (
-                <div className="alert alert-error" onClick={() => setError(null)}>
-                  {error}
+              {state.error && (
+                <div className="alert alert-error" onClick={() => dispatch({ type: ActionTypes.CLEAR_ERROR })}>
+                  {state.error}
                 </div>
               )}
             </div>
@@ -230,15 +349,15 @@ function App() {
                 <button
                   onClick={() => loadDriveFiles({ loadMore: false })}
                   className="primary-button"
-                  disabled={driveLoading}
+                  disabled={state.driveLoading}
                 >
-                  {driveLoading ? 'Loading...' : 'Load files'}
+                  {state.driveLoading ? 'Loading...' : 'Load files'}
                 </button>
-                {driveNextPageToken && (
+                {state.driveNextPageToken && (
                   <button
                     onClick={() => loadDriveFiles({ loadMore: true })}
                     className="secondary-button"
-                    disabled={driveLoading}
+                    disabled={state.driveLoading}
                   >
                     Load more
                   </button>
@@ -246,20 +365,20 @@ function App() {
                 <button
                   onClick={handleImportSelected}
                   className="accent-button"
-                  disabled={isDriveSelectionDisabled || !selectedDriveIds.length}
+                  disabled={isDriveSelectionDisabled || !state.selectedDriveIds.length}
                 >
-                  {importing ? 'Importing...' : `Import (${selectedDriveIds.length})`}
+                  {state.importing ? 'Importing...' : `Import (${state.selectedDriveIds.length})`}
                 </button>
               </div>
             </div>
 
             <div className="drive-list">
-              {driveFiles.length === 0 && !driveLoading ? (
+              {state.driveFiles.length === 0 && !state.driveLoading ? (
                 <p className="muted-text">Google Drive files not loaded. Click "Load files".</p>
               ) : (
                 <ul>
-                  {driveFiles.map((file) => {
-                    const isSelected = selectedDriveIds.includes(file.id);
+                  {state.driveFiles.map((file) => {
+                    const isSelected = state.selectedDriveIds.includes(file.id);
                     return (
                       <li key={file.id} className={isSelected ? 'drive-item selected' : 'drive-item'}>
                         <label>
@@ -286,15 +405,15 @@ function App() {
           <section className="imported-section">
             <div className="section-header">
               <h2>Imported Files</h2>
-              <span className="badge">{importedFiles.length}</span>
+              <span className="badge">{state.importedFiles.length}</span>
             </div>
-            {importedLoading ? (
+            {state.importedLoading ? (
               <p className="muted-text">Loading...</p>
-            ) : importedFiles.length === 0 ? (
+            ) : state.importedFiles.length === 0 ? (
               <p className="muted-text">No imported files yet.</p>
             ) : (
               <ul className="imported-list">
-                {importedFiles.map((file) => (
+                {state.importedFiles.map((file) => (
                   <li key={file.id} className="imported-item">
                     <div>
                       <div className="imported-name">{file.original_name}</div>
@@ -325,9 +444,9 @@ function App() {
                       <button
                         className="action-button action-button-delete"
                         onClick={() => handleDeleteClick(file.id, file.original_name)}
-                        disabled={deleting[file.id]}
+                        disabled={state.deleting[file.id]}
                       >
-                        {deleting[file.id] ? 'Deleting...' : 'Delete'}
+                        {state.deleting[file.id] ? 'Deleting...' : 'Delete'}
                       </button>
                     </div>
                   </li>
@@ -339,11 +458,11 @@ function App() {
       )}
 
       {/* Delete confirmation modal */}
-      {deleteConfirm && (
+      {state.deleteConfirm && (
         <div className="modal-overlay" onClick={handleDeleteCancel}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Confirm Deletion</h3>
-            <p>Are you sure you want to delete the file <strong>"{deleteConfirm.fileName}"</strong>?</p>
+            <p>Are you sure you want to delete the file <strong>"{state.deleteConfirm.fileName}"</strong>?</p>
             <p className="modal-warning">This action cannot be undone.</p>
             <div className="modal-actions">
               <button

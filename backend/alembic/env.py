@@ -1,33 +1,19 @@
 from __future__ import annotations
 
-import os
-from logging.config import fileConfig
-
 import asyncio
+from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
-from backend.app.models import Base  # noqa: F401 - ensure models are imported
+from backend.app.models import Base  # noqa: F401
 from backend.core.config import settings
 
-
-# This is the Alembic Config object, which provides access to the values within the .ini file in use.
 config = context.config
+config.set_main_option("sqlalchemy.url", settings.DB_URL)
 
-# Pass DB URL from app settings
-# Use settings.DB_URL which already handles postgresql:// -> postgresql+asyncpg:// conversion
-_db_url = os.getenv("DB_URL", settings.DB_URL)
-# Render provides postgresql:// but we need postgresql+asyncpg:// for asyncpg
-if _db_url.startswith("postgresql://"):
-    _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-elif _db_url.startswith("postgres://"):
-    _db_url = _db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-config.set_main_option("sqlalchemy.url", _db_url)
-
-# Interpret the config file for Python logging.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
@@ -73,5 +59,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     asyncio.run(run_migrations_online())
-
-

@@ -51,7 +51,7 @@ if frontend_build_path.exists():
     # Serve index.html for all non-API routes (React Router)
     # This must be the LAST route to not interfere with API routes
     # IMPORTANT: Only handle GET - OPTIONS requests are handled by CORS middleware first
-    @app.get("/{full_path:path}")
+    @app.get("/{full_path:path}", name="frontend")
     async def serve_frontend(full_path: str):
         """
         Serve React app. This should be the last route.
