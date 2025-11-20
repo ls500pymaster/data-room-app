@@ -58,7 +58,7 @@ class FileOut(BaseModel):
 
 
 class ImportFilesRequest(BaseModel):
-    file_ids: List[str] = Field(..., min_items=1, max_items=20)
+    file_ids: List[str] = Field(..., min_length=1, max_length=20)
 
 
 class ImportSkippedItem(BaseModel):
