@@ -34,6 +34,10 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=As
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Database session dependency.
+    Creates a new session for each request and closes it after the request is processed.
+    """
     async with AsyncSessionLocal() as session:
         yield session
 

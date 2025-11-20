@@ -4,8 +4,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
-from datetime import datetime, timezone
+import requests
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from backend.core.config import settings
 
 # === FIX GOOGLE NAIVE TZ BUG ===
 _original_expired = Credentials.expired.fget
@@ -33,14 +39,7 @@ def _ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
     # Convert to UTC if timezone is different
     return dt.astimezone(timezone.utc)
 
-import requests
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
-from backend.core.config import settings
 
 
 def create_oauth_flow() -> Flow:
@@ -50,9 +49,8 @@ def create_oauth_flow() -> Flow:
             "web": {
                 "client_id": settings.GOOGLE_CLIENT_ID,
                 "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                # redirect_uris is used by the library for validation, but not automatically passed
+                "auth_uri": settings.GOOGLE_AUTH_URI,
+                "token_uri": settings.GOOGLE_TOKEN_URI,
                 "redirect_uris": [settings.GOOGLE_REDIRECT_URI],
             }
         },
@@ -65,7 +63,7 @@ def create_oauth_flow() -> Flow:
 def get_authorization_url(state: Optional[str] = None) -> str:
     """Generates URL for Google OAuth authorization."""
     flow = create_oauth_flow()
-    # redirect_uri is already specified in Flow configuration (redirect_uris), no need to pass explicitly
+    # redirect_uri is already set in create_oauth_flow(), don't pass it again
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
@@ -95,6 +93,7 @@ async def exchange_code_for_tokens(code: str) -> tuple:
         flow.oauth2session._validate_granted_scopes = patched_validate_granted_scopes
     
     try:
+        # redirect_uri is already set in create_oauth_flow(), don't pass it again
         flow.fetch_token(code=code)
     except ValueError as e:
         # If error still occurs, try to bypass validation using another method
@@ -103,7 +102,7 @@ async def exchange_code_for_tokens(code: str) -> tuple:
             # Use requests directly to exchange code for tokens
             import requests
             token_response = requests.post(
-                "https://oauth2.googleapis.com/token",
+                settings.GOOGLE_TOKEN_URI,
                 data={
                     "code": code,
                     "client_id": settings.GOOGLE_CLIENT_ID,
@@ -124,7 +123,7 @@ async def exchange_code_for_tokens(code: str) -> tuple:
             credentials = Credentials(
                 token=token_data["access_token"],
                 refresh_token=token_data.get("refresh_token"),
-                token_uri="https://oauth2.googleapis.com/token",
+                token_uri=settings.GOOGLE_TOKEN_URI,
                 client_id=settings.GOOGLE_CLIENT_ID,
                 client_secret=settings.GOOGLE_CLIENT_SECRET,
                 scopes=token_data.get("scope", "").split() if token_data.get("scope") else settings.GOOGLE_SCOPES,
@@ -226,7 +225,7 @@ def create_credentials_from_tokens(
     creds = Credentials(
         token=access_token,
         refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
+        token_uri=settings.GOOGLE_TOKEN_URI,
         client_id=settings.GOOGLE_CLIENT_ID,
         client_secret=settings.GOOGLE_CLIENT_SECRET,
         scopes=settings.GOOGLE_SCOPES,
