@@ -25,12 +25,10 @@ A secure file management system with Google Drive integration. Import, view, and
 - **PostgreSQL** 16 - Relational database
 - **asyncpg** 0.30.x - Async PostgreSQL driver
 - **bcrypt** 5.0.x - Password hashing
-- **Google Drive API v3** - File integration via google-api-python-client 2.152.x
 - **Poetry** - Dependency management
 
 ### Frontend
 - **React** 18.3.1 - UI library
-- **React DOM** 18.3.1 - React rendering
 - **React Scripts** 5.0.1 - Build tooling
 - **CSS3** - Styling
 
@@ -52,7 +50,7 @@ Before you begin, ensure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ls500pymaster/data-room-app
 cd DataRoom
 ```
 
@@ -306,4 +304,4 @@ docker compose logs db
 
 ## License
 
-This project is part of an MVP development.
+This project is part of an Data Room MVP development.
