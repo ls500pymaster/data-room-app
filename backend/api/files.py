@@ -34,6 +34,7 @@ class DriveFileOut(BaseModel):
     size_bytes: Optional[int] = None
     modified_time: Optional[str] = None
     web_view_link: Optional[str] = None
+    is_folder: bool = False
 
 
 class DriveFilesResponse(BaseModel):
@@ -89,8 +90,29 @@ def _normalize_extension(name: Optional[str], mime_type: Optional[str]) -> Optio
     return None
 
 
+def _get_valid_web_view_link(web_view_link: Optional[str], drive_file_id: Optional[str]) -> Optional[str]:
+    """
+    Validates and returns a valid Google Drive web view link.
+    If the provided link is invalid or None, generates one from drive_file_id.
+    """
+    # Validate existing link
+    if web_view_link:
+        # Check if it's a valid Google Drive link
+        if web_view_link.startswith("https://drive.google.com/"):
+            return web_view_link
+        # If it's not a valid Drive link (e.g., aistudio.google.com), ignore it
+        # and generate a new one
+    
+    # Generate link from drive_file_id if available
+    if drive_file_id:
+        return f"https://drive.google.com/file/d/{drive_file_id}/view"
+    
+    return None
+
+
 def _serialize_file(file_obj: File) -> Dict[str, Any]:
     metadata = file_obj.scan_report or {}
+    web_view_link = metadata.get("webViewLink")
     return {
         "id": str(file_obj.id),
         "original_name": file_obj.original_name,
@@ -102,7 +124,7 @@ def _serialize_file(file_obj: File) -> Dict[str, Any]:
         "storage_key": file_obj.storage_key,
         "created_at": file_obj.created_at.isoformat() if file_obj.created_at else None,
         "updated_at": file_obj.updated_at.isoformat() if file_obj.updated_at else None,
-        "web_view_link": metadata.get("webViewLink"),
+        "web_view_link": _get_valid_web_view_link(web_view_link, file_obj.drive_file_id),
     }
 
 
@@ -238,19 +260,24 @@ async def list_drive_files_endpoint(
     files: List[DriveFileOut] = []
     for item in drive_listing.get("files", []):
         mime_type = item.get("mimeType")
-        if mime_type and mime_type.startswith("application/vnd.google-apps."):
-            # Skip Google Docs/Sheets/etc for now (they require export handling)
-            continue
+        is_folder = mime_type == "application/vnd.google-apps.folder"
+        
+        # Show all files including Google Docs/Sheets/folders
         size_raw = item.get("size")
         size_bytes = int(size_raw) if size_raw is not None else None
+        drive_file_id = item.get("id")
+        raw_web_view_link = item.get("webViewLink")
+        valid_web_view_link = _get_valid_web_view_link(raw_web_view_link, drive_file_id)
+        
         files.append(
             DriveFileOut(
-                id=item.get("id"),
+                id=drive_file_id,
                 name=item.get("name"),
                 mime_type=mime_type,
                 size_bytes=size_bytes,
                 modified_time=item.get("modifiedTime"),
-                web_view_link=item.get("webViewLink"),
+                web_view_link=valid_web_view_link,
+                is_folder=is_folder,
             )
         )
 
@@ -276,11 +303,17 @@ async def import_files(
     failed: List[ImportFailureItem] = []
 
     for drive_file_id in payload.file_ids:
+        # Check if file already exists (including soft-deleted ones)
         exists_result = await session.execute(
-            select(File).where(File.drive_file_id == drive_file_id, File.deleted_at.is_(None))
+            select(File).where(File.drive_file_id == drive_file_id)
         )
-        if exists_result.scalar_one_or_none():
-            skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
+        existing_file = exists_result.scalar_one_or_none()
+        if existing_file:
+            # If file exists but is deleted, skip it (can't re-import due to unique constraint)
+            if existing_file.deleted_at is None:
+                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
+            else:
+                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
             continue
 
         try:
@@ -292,7 +325,15 @@ async def import_files(
             )
 
             mime_type = metadata.get("mimeType")
-            if mime_type and mime_type.startswith("application/vnd.google-apps."):
+            # Skip folders (can't import folders)
+            if mime_type == "application/vnd.google-apps.folder":
+                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="unsupported_type"))
+                continue
+            # Skip Google Apps files (Docs, Sheets, etc.) and Google AI Studio prompts
+            if mime_type and (
+                mime_type.startswith("application/vnd.google-apps.") or
+                mime_type.startswith("application/vnd.google-makersuite.")
+            ):
                 skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="unsupported_type"))
                 continue
 
@@ -326,6 +367,10 @@ async def import_files(
                 size_from_meta = None
             final_size = size_from_meta if size_from_meta and size_from_meta > 0 else size_bytes
 
+            # Validate and fix webViewLink if needed
+            raw_web_view_link = metadata.get("webViewLink")
+            valid_web_view_link = _get_valid_web_view_link(raw_web_view_link, drive_file_id)
+            
             new_file = File(
                 id=file_uuid,
                 uploader_id=current_user.id,
@@ -340,7 +385,7 @@ async def import_files(
                 scan_report={
                     "source": "google_drive",
                     "driveFileId": drive_file_id,
-                    "webViewLink": metadata.get("webViewLink"),
+                    "webViewLink": valid_web_view_link,
                     "owners": metadata.get("owners"),
                 },
             )
@@ -350,6 +395,12 @@ async def import_files(
         except HTTPException:
             raise
         except Exception as exc:
+            # Handle IntegrityError (duplicate drive_file_id) as already_imported
+            from sqlalchemy.exc import IntegrityError
+            if isinstance(exc, IntegrityError) and "files_drive_file_id_key" in str(exc):
+                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
+                continue
+            
             # Improve error messages
             error_msg = str(exc)
             if "404" in error_msg or "not found" in error_msg.lower():
@@ -363,9 +414,26 @@ async def import_files(
             failed.append(ImportFailureItem(file_id=drive_file_id, error=error_msg))
 
     if imported_files:
-        await session.commit()
-        for file_obj in imported_files:
-            await session.refresh(file_obj)
+        try:
+            await session.commit()
+            for file_obj in imported_files:
+                await session.refresh(file_obj)
+        except Exception as exc:
+            await session.rollback()
+            # Handle IntegrityError (duplicate drive_file_id) - move failed imports to skipped
+            from sqlalchemy.exc import IntegrityError
+            if isinstance(exc, IntegrityError) and "files_drive_file_id_key" in str(exc):
+                # Find which file caused the error and move it to skipped
+                for file_obj in imported_files:
+                    if file_obj.drive_file_id:
+                        skipped.append(ImportSkippedItem(file_id=file_obj.drive_file_id, reason="already_imported"))
+                imported_files = []
+            else:
+                # For other errors, move all to failed
+                for file_obj in imported_files:
+                    if file_obj.drive_file_id:
+                        failed.append(ImportFailureItem(file_id=file_obj.drive_file_id, error=str(exc)))
+                imported_files = []
     else:
         await session.rollback()
 

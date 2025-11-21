@@ -13,6 +13,7 @@ from backend.api.files import (
     view_file,
     delete_file_endpoint,
     ImportFilesRequest,
+    _get_valid_web_view_link,
 )
 from backend.app.models.file import File
 
@@ -94,6 +95,89 @@ class TestListDriveFiles:
             assert len(result.files) == 1
             assert result.files[0].id == "drive_file_1"
             assert result.files[0].name == "test.pdf"
+            assert result.files[0].is_folder is False
+    
+    async def test_list_drive_files_includes_folders(self, test_db_session, test_user_with_google):
+        """Test listing Google Drive files includes folders."""
+        with patch("backend.api.files._refresh_and_save_user_tokens"), \
+             patch("backend.api.files.list_drive_files") as mock_list:
+            
+            mock_list.return_value = {
+                "files": [
+                    {
+                        "id": "drive_file_1",
+                        "name": "test.pdf",
+                        "mimeType": "application/pdf",
+                        "size": "1024",
+                        "modifiedTime": "2024-01-01T00:00:00Z",
+                        "webViewLink": "https://drive.google.com/file1",
+                    },
+                    {
+                        "id": "drive_folder_1",
+                        "name": "My Folder",
+                        "mimeType": "application/vnd.google-apps.folder",
+                        "modifiedTime": "2024-01-01T00:00:00Z",
+                        "webViewLink": "https://drive.google.com/folder1",
+                    }
+                ],
+                "next_page_token": None,
+            }
+            
+            result = await list_drive_files_endpoint(
+                page_size=20,
+                page_token=None,
+                current_user=test_user_with_google,
+                session=test_db_session,
+            )
+            
+            assert len(result.files) == 2
+            # Check file
+            file_item = next(f for f in result.files if f.id == "drive_file_1")
+            assert file_item.name == "test.pdf"
+            assert file_item.is_folder is False
+            # Check folder
+            folder_item = next(f for f in result.files if f.id == "drive_folder_1")
+            assert folder_item.name == "My Folder"
+            assert folder_item.is_folder is True
+    
+    async def test_list_drive_files_includes_google_docs(self, test_db_session, test_user_with_google):
+        """Test listing Google Drive files includes Google Docs/Sheets."""
+        with patch("backend.api.files._refresh_and_save_user_tokens"), \
+             patch("backend.api.files.list_drive_files") as mock_list:
+            
+            mock_list.return_value = {
+                "files": [
+                    {
+                        "id": "drive_doc_1",
+                        "name": "My Document",
+                        "mimeType": "application/vnd.google-apps.document",
+                        "modifiedTime": "2024-01-01T00:00:00Z",
+                        "webViewLink": "https://drive.google.com/doc1",
+                    },
+                    {
+                        "id": "drive_sheet_1",
+                        "name": "My Spreadsheet",
+                        "mimeType": "application/vnd.google-apps.spreadsheet",
+                        "modifiedTime": "2024-01-01T00:00:00Z",
+                        "webViewLink": "https://drive.google.com/sheet1",
+                    }
+                ],
+                "next_page_token": None,
+            }
+            
+            result = await list_drive_files_endpoint(
+                page_size=20,
+                page_token=None,
+                current_user=test_user_with_google,
+                session=test_db_session,
+            )
+            
+            # All files should be included (no filtering)
+            assert len(result.files) == 2
+            doc_item = next(f for f in result.files if f.id == "drive_doc_1")
+            assert doc_item.name == "My Document"
+            assert doc_item.mime_type == "application/vnd.google-apps.document"
+            assert doc_item.is_folder is False
     
     async def test_list_drive_files_no_token(self, test_db_session, test_user):
         """Test listing drive files without Google token."""
@@ -156,6 +240,39 @@ class TestImportFiles:
         assert len(result.skipped) == 1
         assert result.skipped[0].reason == "already_imported"
     
+    async def test_import_files_already_imported_but_deleted(self, test_db_session, test_user_with_google):
+        """Test importing file that was previously imported but deleted (soft delete)."""
+        from datetime import datetime, timezone
+        # Create a deleted file with drive_file_id
+        deleted_file = File(
+            id=uuid.uuid4(),
+            uploader_id=test_user_with_google.id,
+            storage_key="users/test/deleted.pdf",
+            drive_file_id="drive_file_deleted",
+            original_name="deleted.pdf",
+            extension="pdf",
+            mime_type="application/pdf",
+            size_bytes=1024,
+            status="ready",
+            deleted_at=datetime.now(timezone.utc),
+        )
+        test_db_session.add(deleted_file)
+        await test_db_session.commit()
+        
+        payload = ImportFilesRequest(file_ids=["drive_file_deleted"])
+        
+        result = await import_files(
+            payload=payload,
+            session=test_db_session,
+            current_user=test_user_with_google,
+        )
+        
+        # Should be skipped because file exists (even though deleted)
+        assert len(result.imported) == 0
+        assert len(result.skipped) == 1
+        assert result.skipped[0].file_id == "drive_file_deleted"
+        assert result.skipped[0].reason == "already_imported"
+    
     async def test_import_files_unsupported_type(self, test_db_session, test_user_with_google):
         """Test importing unsupported file type (Google Docs)."""
         with patch("backend.api.files._refresh_and_save_user_tokens"), \
@@ -177,6 +294,53 @@ class TestImportFiles:
             
             assert len(result.imported) == 0
             assert len(result.skipped) == 1
+            assert result.skipped[0].reason == "unsupported_type"
+    
+    async def test_import_files_unsupported_type_ai_studio(self, test_db_session, test_user_with_google):
+        """Test importing unsupported file type (Google AI Studio prompt)."""
+        with patch("backend.api.files._refresh_and_save_user_tokens"), \
+             patch("backend.api.files.get_file_metadata") as mock_metadata:
+            
+            mock_metadata.return_value = {
+                "id": "drive_file_1",
+                "name": "prompt.prompt",
+                "mimeType": "application/vnd.google-makersuite.prompt",
+            }
+            
+            payload = ImportFilesRequest(file_ids=["drive_file_1"])
+            
+            result = await import_files(
+                payload=payload,
+                session=test_db_session,
+                current_user=test_user_with_google,
+            )
+            
+            assert len(result.imported) == 0
+            assert len(result.skipped) == 1
+            assert result.skipped[0].reason == "unsupported_type"
+    
+    async def test_import_files_skips_folders(self, test_db_session, test_user_with_google):
+        """Test importing folders is skipped."""
+        with patch("backend.api.files._refresh_and_save_user_tokens"), \
+             patch("backend.api.files.get_file_metadata") as mock_metadata:
+            
+            mock_metadata.return_value = {
+                "id": "drive_folder_1",
+                "name": "My Folder",
+                "mimeType": "application/vnd.google-apps.folder",
+            }
+            
+            payload = ImportFilesRequest(file_ids=["drive_folder_1"])
+            
+            result = await import_files(
+                payload=payload,
+                session=test_db_session,
+                current_user=test_user_with_google,
+            )
+            
+            assert len(result.imported) == 0
+            assert len(result.skipped) == 1
+            assert result.skipped[0].file_id == "drive_folder_1"
             assert result.skipped[0].reason == "unsupported_type"
     
     async def test_import_files_download_error(self, test_db_session, test_user_with_google):
@@ -312,4 +476,39 @@ class TestDeleteFile:
             )
         
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestWebViewLinkValidation:
+    """Test webViewLink validation and generation."""
+    
+    def test_valid_web_view_link(self):
+        """Test that valid Google Drive link is returned as-is."""
+        link = "https://drive.google.com/file/d/abc123/view"
+        result = _get_valid_web_view_link(link, "abc123")
+        assert result == link
+    
+    def test_invalid_web_view_link_replaced(self):
+        """Test that invalid link (e.g., aistudio.google.com) is replaced with correct one."""
+        invalid_link = "https://aistudio.google.com/app/prompts/"
+        drive_file_id = "abc123"
+        result = _get_valid_web_view_link(invalid_link, drive_file_id)
+        assert result == "https://drive.google.com/file/d/abc123/view"
+        assert result != invalid_link
+    
+    def test_none_web_view_link_generated(self):
+        """Test that None link is generated from drive_file_id."""
+        drive_file_id = "abc123"
+        result = _get_valid_web_view_link(None, drive_file_id)
+        assert result == "https://drive.google.com/file/d/abc123/view"
+    
+    def test_no_link_no_id_returns_none(self):
+        """Test that None is returned when both link and drive_file_id are None."""
+        result = _get_valid_web_view_link(None, None)
+        assert result is None
+    
+    def test_empty_string_link_generated(self):
+        """Test that empty string link is treated as None and generated."""
+        drive_file_id = "abc123"
+        result = _get_valid_web_view_link("", drive_file_id)
+        assert result == "https://drive.google.com/file/d/abc123/view"
 
