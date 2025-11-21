@@ -65,6 +65,7 @@ class ImportFilesRequest(BaseModel):
 class ImportSkippedItem(BaseModel):
     file_id: str
     reason: str
+    file_name: Optional[str] = None  # Optional file name for better UX
 
 
 class ImportFailureItem(BaseModel):
@@ -303,18 +304,38 @@ async def import_files(
     failed: List[ImportFailureItem] = []
 
     for drive_file_id in payload.file_ids:
-        # Check if file already exists (including soft-deleted ones)
+        # Check if file already exists (only non-deleted files)
         exists_result = await session.execute(
-            select(File).where(File.drive_file_id == drive_file_id)
+            select(File).where(
+                File.drive_file_id == drive_file_id,
+                File.deleted_at.is_(None)
+            )
         )
         existing_file = exists_result.scalar_one_or_none()
         if existing_file:
-            # If file exists but is deleted, skip it (can't re-import due to unique constraint)
-            if existing_file.deleted_at is None:
-                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
-            else:
-                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
+            # File already imported and not deleted - skip it
+            file_name = existing_file.original_name if existing_file else None
+            skipped.append(ImportSkippedItem(
+                file_id=drive_file_id, 
+                reason="already_imported",
+                file_name=file_name
+            ))
             continue
+        
+        # Check if file was previously deleted (soft-deleted)
+        deleted_result = await session.execute(
+            select(File).where(
+                File.drive_file_id == drive_file_id,
+                File.deleted_at.isnot(None)
+            )
+        )
+        deleted_file = deleted_result.scalar_one_or_none()
+        if deleted_file:
+            # File was deleted - allow re-import by removing old record
+            # This allows re-importing deleted files
+            await session.delete(deleted_file)
+            await session.flush()  # Flush to ensure deletion happens before new insert
+            # Continue to import process below
 
         try:
             metadata = await get_file_metadata(
@@ -325,19 +346,27 @@ async def import_files(
             )
 
             mime_type = metadata.get("mimeType")
+            original_name = metadata.get("name") or "untitled"
+            
             # Skip folders (can't import folders)
             if mime_type == "application/vnd.google-apps.folder":
-                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="unsupported_type"))
+                skipped.append(ImportSkippedItem(
+                    file_id=drive_file_id, 
+                    reason="unsupported_type",
+                    file_name=original_name
+                ))
                 continue
             # Skip Google Apps files (Docs, Sheets, etc.) and Google AI Studio prompts
             if mime_type and (
                 mime_type.startswith("application/vnd.google-apps.") or
                 mime_type.startswith("application/vnd.google-makersuite.")
             ):
-                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="unsupported_type"))
+                skipped.append(ImportSkippedItem(
+                    file_id=drive_file_id, 
+                    reason="unsupported_type",
+                    file_name=original_name
+                ))
                 continue
-
-            original_name = metadata.get("name") or "untitled"
             extension = _normalize_extension(original_name, mime_type)
 
             file_bytes = await download_drive_file(
@@ -398,7 +427,23 @@ async def import_files(
             # Handle IntegrityError (duplicate drive_file_id) as already_imported
             from sqlalchemy.exc import IntegrityError
             if isinstance(exc, IntegrityError) and "files_drive_file_id_key" in str(exc):
-                skipped.append(ImportSkippedItem(file_id=drive_file_id, reason="already_imported"))
+                # Try to get file name from metadata if available
+                file_name = None
+                try:
+                    metadata = await get_file_metadata(
+                        current_user.google_access_token,
+                        current_user.google_refresh_token,
+                        current_user.google_token_expires_at,
+                        drive_file_id,
+                    )
+                    file_name = metadata.get("name")
+                except:
+                    pass
+                skipped.append(ImportSkippedItem(
+                    file_id=drive_file_id, 
+                    reason="already_imported",
+                    file_name=file_name
+                ))
                 continue
             
             # Improve error messages
@@ -426,7 +471,11 @@ async def import_files(
                 # Find which file caused the error and move it to skipped
                 for file_obj in imported_files:
                     if file_obj.drive_file_id:
-                        skipped.append(ImportSkippedItem(file_id=file_obj.drive_file_id, reason="already_imported"))
+                        skipped.append(ImportSkippedItem(
+                            file_id=file_obj.drive_file_id, 
+                            reason="already_imported",
+                            file_name=file_obj.original_name
+                        ))
                 imported_files = []
             else:
                 # For other errors, move all to failed

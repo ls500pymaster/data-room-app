@@ -240,8 +240,8 @@ class TestImportFiles:
         assert len(result.skipped) == 1
         assert result.skipped[0].reason == "already_imported"
     
-    async def test_import_files_already_imported_but_deleted(self, test_db_session, test_user_with_google):
-        """Test importing file that was previously imported but deleted (soft delete)."""
+    async def test_import_files_already_imported_but_deleted(self, test_db_session, test_user_with_google, temp_storage_dir):
+        """Test importing file that was previously imported but deleted (soft delete) - should allow re-import."""
         from datetime import datetime, timezone
         # Create a deleted file with drive_file_id
         deleted_file = File(
@@ -259,19 +259,32 @@ class TestImportFiles:
         test_db_session.add(deleted_file)
         await test_db_session.commit()
         
-        payload = ImportFilesRequest(file_ids=["drive_file_deleted"])
-        
-        result = await import_files(
-            payload=payload,
-            session=test_db_session,
-            current_user=test_user_with_google,
-        )
-        
-        # Should be skipped because file exists (even though deleted)
-        assert len(result.imported) == 0
-        assert len(result.skipped) == 1
-        assert result.skipped[0].file_id == "drive_file_deleted"
-        assert result.skipped[0].reason == "already_imported"
+        with patch("backend.api.files._refresh_and_save_user_tokens"), \
+             patch("backend.api.files.get_file_metadata") as mock_metadata, \
+             patch("backend.api.files.download_drive_file") as mock_download:
+            
+            mock_metadata.return_value = {
+                "id": "drive_file_deleted",
+                "name": "deleted.pdf",
+                "mimeType": "application/pdf",
+                "size": "1024",
+                "webViewLink": "https://drive.google.com/file_deleted",
+            }
+            mock_download.return_value = b"file content"
+            
+            payload = ImportFilesRequest(file_ids=["drive_file_deleted"])
+            
+            result = await import_files(
+                payload=payload,
+                session=test_db_session,
+                current_user=test_user_with_google,
+            )
+            
+            # Should allow re-import of deleted file
+            assert len(result.imported) == 1
+            assert len(result.skipped) == 0
+            assert len(result.failed) == 0
+            assert result.imported[0].original_name == "deleted.pdf"
     
     async def test_import_files_unsupported_type(self, test_db_session, test_user_with_google):
         """Test importing unsupported file type (Google Docs)."""

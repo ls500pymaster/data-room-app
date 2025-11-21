@@ -244,17 +244,53 @@ function App() {
       const skippedCount = result.skipped.length;
       const failedCount = result.failed.length;
 
-      const summaryParts = [];
-      if (importedCount) summaryParts.push(`Imported: ${importedCount}`);
-      if (skippedCount) summaryParts.push(`Skipped: ${skippedCount}`);
-      if (failedCount) summaryParts.push(`Failed: ${failedCount}`);
+      // Build detailed messages
+      const messages = [];
+      const errors = [];
       
-      // Show error details if any
-      if (result.failed && result.failed.length > 0) {
-        const errorDetails = result.failed.map(f => `${f.file_id}: ${f.error}`).join('; ');
-        dispatch({ type: ActionTypes.SET_ERROR, payload: `Import errors: ${errorDetails}` });
+      if (importedCount) {
+        messages.push(`Imported: ${importedCount} file${importedCount > 1 ? 's' : ''}`);
+      }
+      
+      if (skippedCount > 0) {
+        // Group skipped files by reason
+        const alreadyImported = result.skipped.filter(s => s.reason === 'already_imported');
+        const unsupported = result.skipped.filter(s => s.reason === 'unsupported_type');
+        
+        if (alreadyImported.length > 0) {
+          const fileNames = alreadyImported
+            .map(s => s.file_name || s.file_id)
+            .slice(0, 3)
+            .join(', ');
+          const more = alreadyImported.length > 3 ? ` and ${alreadyImported.length - 3} more` : '';
+          messages.push(`Already imported: ${fileNames}${more}`);
+        }
+        
+        if (unsupported.length > 0) {
+          const fileNames = unsupported
+            .map(s => s.file_name || s.file_id)
+            .slice(0, 3)
+            .join(', ');
+          const more = unsupported.length > 3 ? ` and ${unsupported.length - 3} more` : '';
+          messages.push(`Unsupported type: ${fileNames}${more}`);
+        }
+      }
+      
+      if (failedCount > 0) {
+        const errorDetails = result.failed.map(f => {
+          const fileName = state.driveFiles.find(df => df.id === f.file_id)?.name || f.file_id;
+          return `${fileName}: ${f.error}`;
+        }).join('; ');
+        errors.push(`Failed: ${errorDetails}`);
+      }
+      
+      // Show messages
+      if (errors.length > 0) {
+        dispatch({ type: ActionTypes.SET_ERROR, payload: errors.join(' ') });
+      } else if (messages.length > 0) {
+        dispatch({ type: ActionTypes.SET_MESSAGE, payload: messages.join(' • ') });
       } else {
-        dispatch({ type: ActionTypes.SET_MESSAGE, payload: summaryParts.join(' · ') || 'Import completed' });
+        dispatch({ type: ActionTypes.SET_MESSAGE, payload: 'Import completed' });
       }
 
       if (importedCount) {
@@ -392,7 +428,6 @@ function App() {
                             onChange={() => toggleDriveSelection(file.id)}
                           />
                           <span className="drive-item-name">
-                            {isFolder && '📁 '}
                             {file.name}
                             {isFolder && ' (Folder)'}
                             {isGoogleApp && !isFolder && ' (Google App)'}
