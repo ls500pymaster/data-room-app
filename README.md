@@ -6,29 +6,38 @@ A secure file management system with Google Drive integration. Import, view, and
 
 - **Dual Authentication**: Sign in with Google OAuth or email/password
 - **Google Drive Integration**: Import files directly from your Google Drive
-- **File Viewing**: View imported files directly in the browser
+- **Full Drive Visibility**: View all files and folders from Google Drive (including Google Docs, Sheets, and empty folders)
+- **File Viewing**: View imported files directly in the browser with range request support
 - **File Management**: Delete files from your Data Room
-- **Secure Storage**: Files stored securely on the server
+- **Secure Storage**: Files stored securely on the server with checksum verification
 - **User Dashboard**: Manage your files with an intuitive interface
+- **Pagination Support**: Load more files from Google Drive with pagination
 
 ## Tech Stack
 
 ### Backend
-- **FastAPI** 0.115.2 - Modern Python web framework
+- **Python** 3.11 - Programming language
+- **FastAPI** 0.121.3 - Modern Python web framework
+- **Pydantic** 2.12.x - Data validation using Python type hints
+- **SQLAlchemy** 2.0.44 - ORM for database operations
+- **Alembic** 1.17.x - Database migrations
+- **Uvicorn** 0.38.x - ASGI server
 - **PostgreSQL** 16 - Relational database
-- **SQLAlchemy** 2.x - ORM for database operations
-- **Alembic** 2.x - Database migrations
+- **asyncpg** 0.30.x - Async PostgreSQL driver
+- **bcrypt** 5.0.x - Password hashing
+- **Google Drive API v3** - File integration via google-api-python-client 2.152.x
 - **Poetry** - Dependency management
-- **Google Drive API v3** - File integration
 
 ### Frontend
 - **React** 18.3.1 - UI library
-- **Axios** - HTTP client
+- **React DOM** 18.3.1 - React rendering
+- **React Scripts** 5.0.1 - Build tooling
 - **CSS3** - Styling
 
 ### Infrastructure
 - **Docker Compose** - Container orchestration
-- **PostgreSQL** - Database service
+- **PostgreSQL** 16 - Database service
+- **Docker** - Containerization
 
 ## Prerequisites
 
@@ -161,17 +170,16 @@ DataRoom/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/files` | List all imported files |
+| `GET` | `/api/files/drive` | List files in Google Drive (with pagination) |
 | `POST` | `/api/files/import` | Import files from Google Drive |
-| `GET` | `/api/files/{id}` | Get file metadata |
-| `GET` | `/api/files/{id}/view` | View file in browser |
-| `DELETE` | `/api/files/{id}` | Delete file from Data Room |
+| `GET` | `/api/files/{id}/view` | View file in browser (supports range requests) |
+| `DELETE` | `/api/files/{id}` | Delete file from Data Room (soft delete) |
 
 ### Google Drive
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/drive/picker-config` | Get Google Picker configuration |
-| `GET` | `/api/drive/files` | List files in Google Drive |
+| `GET` | `/api/files/drive` | List files in Google Drive (with pagination) |
 
 ## Development
 
