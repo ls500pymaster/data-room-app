@@ -14,7 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db import get_session
 from backend.app.models import User
-from backend.app.security import create_session_token, hash_password, verify_password
+from backend.app.security import (
+    create_session_token, 
+    hash_password,
+    verify_password)
 from backend.app.deps import get_current_user
 from backend.app.services.google_drive import (
     get_authorization_url,

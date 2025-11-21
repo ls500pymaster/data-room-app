@@ -379,20 +379,28 @@ function App() {
                 <ul>
                   {state.driveFiles.map((file) => {
                     const isSelected = state.selectedDriveIds.includes(file.id);
+                    const isFolder = file.is_folder || false;
+                    const isGoogleApp = file.mime_type && file.mime_type.startsWith('application/vnd.google-apps.');
+                    const canImport = !isFolder && !isGoogleApp;
                     return (
                       <li key={file.id} className={isSelected ? 'drive-item selected' : 'drive-item'}>
                         <label>
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            disabled={isDriveSelectionDisabled}
+                            disabled={isDriveSelectionDisabled || !canImport}
                             onChange={() => toggleDriveSelection(file.id)}
                           />
-                          <span className="drive-item-name">{file.name}</span>
+                          <span className="drive-item-name">
+                            {isFolder && '📁 '}
+                            {file.name}
+                            {isFolder && ' (Folder)'}
+                            {isGoogleApp && !isFolder && ' (Google App)'}
+                          </span>
                         </label>
                         <div className="drive-item-meta">
-                          <span>{file.mime_type || '—'}</span>
-                          <span>{file.size_bytes ? `${file.size_bytes.toLocaleString()} bytes` : 'Size unknown'}</span>
+                          <span>{isFolder ? 'Folder' : (file.mime_type || '—')}</span>
+                          <span>{isFolder || isGoogleApp ? '—' : (file.size_bytes ? `${file.size_bytes.toLocaleString()} bytes` : 'Size unknown')}</span>
                         </div>
                       </li>
                     );
