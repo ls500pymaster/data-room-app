@@ -63,6 +63,7 @@ class UserOut(BaseModel):
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     status: str
+    has_google_drive: bool = False
 
     @staticmethod
     def from_model(u: User) -> "UserOut":
@@ -72,6 +73,7 @@ class UserOut(BaseModel):
             full_name=u.full_name,
             avatar_url=u.avatar_url,
             status=u.status,
+            has_google_drive=bool(u.google_access_token),
         )
 
 
