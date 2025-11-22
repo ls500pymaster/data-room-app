@@ -189,8 +189,8 @@ class TestListDriveFiles:
                 session=test_db_session,
             )
         
-        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Google Drive access token" in exc_info.value.detail
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Google Drive is not connected" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
