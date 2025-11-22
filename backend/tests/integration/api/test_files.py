@@ -81,8 +81,8 @@ class TestFilesIntegration:
             "/api/files/drive",
         )
         
-        assert response.status_code == 400
-        assert "Google Drive access token" in response.json()["detail"]
+        assert response.status_code == 403
+        assert "Google Drive is not connected" in response.json()["detail"]
     
     async def test_import_files_success(self, test_client, test_db_session, test_user_with_google, temp_storage_dir):
         """Test importing files from Google Drive."""
