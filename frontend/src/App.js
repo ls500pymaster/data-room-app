@@ -361,6 +361,16 @@ function App() {
         dispatch({ type: ActionTypes.SET_ERROR, payload: 'Please sign in to view Google Drive' });
         return Promise.reject(new Error('User not authenticated'));
       }
+      
+      // Check if Google Drive is connected
+      if (!state.currentUser.has_google_drive) {
+        dispatch({ 
+          type: ActionTypes.SET_ERROR, 
+          payload: 'Google Drive is not connected. Please sign in with Google to access Google Drive files.' 
+        });
+        return Promise.reject(new Error('Google Drive not connected'));
+      }
+      
       if (loadMore && !state.driveNextPageToken) {
         return Promise.reject(new Error('No more pages'));
       }
@@ -388,7 +398,16 @@ function App() {
         }
         return data;
       } catch (err) {
-        dispatch({ type: ActionTypes.SET_ERROR, payload: err.message });
+        const errorMsg = err.message || 'Unknown error';
+        // Handle Google Drive not connected error
+        if (errorMsg.includes('403') || errorMsg.includes('Google Drive is not connected') || errorMsg.includes('not connected')) {
+          dispatch({ 
+            type: ActionTypes.SET_ERROR, 
+            payload: 'Google Drive is not connected. Please sign in with Google to access Google Drive files.' 
+          });
+        } else {
+          dispatch({ type: ActionTypes.SET_ERROR, payload: errorMsg });
+        }
         throw err;
       } finally {
         dispatch({ type: ActionTypes.SET_DRIVE_LOADING, payload: false });
@@ -788,8 +807,11 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="app-header-top">
-          <div>
-            <h1 className="app-title">Data Room MVP</h1>
+          <div className="app-header-info">
+            <div className="app-title-wrapper">
+              <i className="fa-brands fa-google-drive app-title-icon"></i>
+              <h1 className="app-title">Data Room App</h1>
+            </div>
             <p className="app-subtitle">Import and manage files from Google Drive</p>
           </div>
           <div className="app-actions">
@@ -859,11 +881,19 @@ function App() {
               <div className="section-actions">
                 <button
                   onClick={() => {
+                    // Check if Google Drive is connected before loading
+                    if (!state.currentUser?.has_google_drive) {
+                      dispatch({ 
+                        type: ActionTypes.SET_ERROR, 
+                        payload: 'Google Drive is not connected. Please sign in with Google to access Google Drive files.' 
+                      });
+                      return;
+                    }
                     dispatch({ type: ActionTypes.RESET_FOLDER_NAVIGATION });
                     loadDriveFiles({ loadMore: false, folderId: null });
                   }}
                   className="primary-button"
-                  disabled={state.driveLoading}
+                  disabled={state.driveLoading || !state.currentUser?.has_google_drive}
                 >
                   {state.driveLoading ? 'Loading...' : 'Load files'}
                 </button>
@@ -935,7 +965,14 @@ function App() {
                   <p>Drop files here to upload to Google Drive</p>
                 </div>
               )}
-              {state.driveFiles.length === 0 && !state.driveLoading && !state.uploadingToDrive && !state.dragOver ? (
+              {!state.currentUser?.has_google_drive ? (
+                <div className="drive-not-connected">
+                  <i className="fa-solid fa-circle-exclamation" style={{ marginRight: '8px', color: '#f59e0b' }}></i>
+                  <p className="muted-text">
+                    Google Drive is not connected. Please sign in with Google to access your Google Drive files.
+                  </p>
+                </div>
+              ) : state.driveFiles.length === 0 && !state.driveLoading && !state.uploadingToDrive && !state.dragOver ? (
                 <p className="muted-text">Google Drive files not loaded. Click "Load files".</p>
               ) : (
                 <ul>
