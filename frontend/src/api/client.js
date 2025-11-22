@@ -19,11 +19,16 @@ class ApiClient {
 
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
+    
+    // Check if body is FormData - don't stringify it and don't set Content-Type
+    const isFormData = options.body instanceof FormData;
+    
     const config = {
       ...options,
       credentials: 'include', // For working with cookies
       headers: {
-        'Content-Type': 'application/json',
+        // Only set Content-Type for non-FormData requests
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...options.headers,
       },
     };
@@ -52,10 +57,14 @@ class ApiClient {
     return this.request(endpoint, { method: 'GET' });
   }
 
-  async post(endpoint, data) {
+  async post(endpoint, data, options = {}) {
+    // If data is FormData, pass it directly; otherwise stringify
+    const body = data instanceof FormData ? data : JSON.stringify(data);
+    
     return this.request(endpoint, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body,
+      ...options,
     });
   }
 

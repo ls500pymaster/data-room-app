@@ -32,6 +32,13 @@ const initialState = {
   message: null,
   error: null,
   healthStatus: null,
+  checkingHealth: false,
+  uploadingToDrive: false,
+  dragOver: false,
+  createFolderModal: null,
+  creatingFolder: false,
+  currentFolderId: null,
+  folderNavigationStack: [],
 };
 
 // Action types
@@ -55,8 +62,19 @@ const ActionTypes = {
   SET_ERROR: 'SET_ERROR',
   CLEAR_ERROR: 'CLEAR_ERROR',
   SET_HEALTH_STATUS: 'SET_HEALTH_STATUS',
+  SET_CHECKING_HEALTH: 'SET_CHECKING_HEALTH',
   RESET_ON_LOGOUT: 'RESET_ON_LOGOUT',
   REMOVE_DRIVE_FILES: 'REMOVE_DRIVE_FILES',
+  SET_UPLOADING_TO_DRIVE: 'SET_UPLOADING_TO_DRIVE',
+  SET_DRAG_OVER: 'SET_DRAG_OVER',
+  SET_CREATE_FOLDER_MODAL: 'SET_CREATE_FOLDER_MODAL',
+  CLEAR_CREATE_FOLDER_MODAL: 'CLEAR_CREATE_FOLDER_MODAL',
+  SET_CREATING_FOLDER: 'SET_CREATING_FOLDER',
+  SET_CURRENT_FOLDER: 'SET_CURRENT_FOLDER',
+  NAVIGATE_TO_FOLDER: 'NAVIGATE_TO_FOLDER',
+  NAVIGATE_BACK: 'NAVIGATE_BACK',
+  RESET_FOLDER_NAVIGATION: 'RESET_FOLDER_NAVIGATION',
+  SET_FOLDER_NAVIGATION_STACK: 'SET_FOLDER_NAVIGATION_STACK',
 };
 
 // Reducer
@@ -130,7 +148,10 @@ const appReducer = (state, action) => {
       return { ...state, error: null };
     
     case ActionTypes.SET_HEALTH_STATUS:
-      return { ...state, healthStatus: action.payload };
+      return { ...state, healthStatus: action.payload, checkingHealth: false };
+    
+    case ActionTypes.SET_CHECKING_HEALTH:
+      return { ...state, checkingHealth: action.payload };
     
     case ActionTypes.REMOVE_DRIVE_FILES:
       return {
@@ -140,11 +161,59 @@ const appReducer = (state, action) => {
         ),
       };
     
+    case ActionTypes.SET_UPLOADING_TO_DRIVE:
+      return { ...state, uploadingToDrive: action.payload };
+    
+    case ActionTypes.SET_DRAG_OVER:
+      return { ...state, dragOver: action.payload };
+    
+    case ActionTypes.SET_CREATE_FOLDER_MODAL:
+      return { ...state, createFolderModal: action.payload };
+    
+    case ActionTypes.CLEAR_CREATE_FOLDER_MODAL:
+      return { ...state, createFolderModal: null };
+    
+    case ActionTypes.SET_CREATING_FOLDER:
+      return { ...state, creatingFolder: action.payload };
+    
+    case ActionTypes.SET_CURRENT_FOLDER:
+      return { ...state, currentFolderId: action.payload };
+    
+    case ActionTypes.NAVIGATE_TO_FOLDER:
+      return {
+        ...state,
+        currentFolderId: action.payload.id,
+        folderNavigationStack: [...state.folderNavigationStack, action.payload],
+      };
+    
+    case ActionTypes.NAVIGATE_BACK:
+      const newStack = state.folderNavigationStack.slice(0, -1);
+      const newCurrentFolderId = newStack.length > 0 ? newStack[newStack.length - 1].id : null;
+      return {
+        ...state,
+        folderNavigationStack: newStack,
+        currentFolderId: newCurrentFolderId,
+      };
+    
+    case ActionTypes.RESET_FOLDER_NAVIGATION:
+      return {
+        ...state,
+        currentFolderId: null,
+        folderNavigationStack: [],
+      };
+    
+    case ActionTypes.SET_FOLDER_NAVIGATION_STACK:
+      return {
+        ...state,
+        folderNavigationStack: action.payload,
+      };
+    
     case ActionTypes.RESET_ON_LOGOUT:
       return {
         ...initialState,
         currentUser: null,
         healthStatus: state.healthStatus,
+        checkingHealth: false,
       };
     
     default:
@@ -152,16 +221,108 @@ const appReducer = (state, action) => {
   }
 };
 
+// Helper function to get Font Awesome icon class based on MIME type
+const getFileIcon = (mimeType) => {
+  if (!mimeType) {
+    return 'fa-file';
+  }
+
+  // Images
+  if (mimeType.startsWith('image/')) {
+    return 'fa-file-image';
+  }
+
+  // Videos
+  if (mimeType.startsWith('video/')) {
+    return 'fa-file-video';
+  }
+
+  // Audio
+  if (mimeType.startsWith('audio/')) {
+    return 'fa-file-audio';
+  }
+
+  // PDF
+  if (mimeType === 'application/pdf') {
+    return 'fa-file-pdf';
+  }
+
+  // Archives
+  if (
+    mimeType === 'application/zip' ||
+    mimeType === 'application/x-zip-compressed' ||
+    mimeType === 'application/x-rar-compressed' ||
+    mimeType === 'application/x-7z-compressed' ||
+    mimeType === 'application/x-tar' ||
+    mimeType === 'application/gzip'
+  ) {
+    return 'fa-file-zipper';
+  }
+
+  // Text files
+  if (mimeType.startsWith('text/')) {
+    if (mimeType === 'text/markdown' || mimeType === 'text/x-markdown') {
+      return 'fa-file-code';
+    }
+    if (mimeType === 'text/csv') {
+      return 'fa-file-csv';
+    }
+    return 'fa-file-lines';
+  }
+
+  // Code files
+  if (
+    mimeType === 'application/json' ||
+    mimeType === 'application/javascript' ||
+    mimeType === 'text/javascript' ||
+    mimeType === 'application/xml' ||
+    mimeType === 'text/xml'
+  ) {
+    return 'fa-file-code';
+  }
+
+  // Word documents
+  if (
+    mimeType === 'application/msword' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
+    return 'fa-file-word';
+  }
+
+  // Excel
+  if (
+    mimeType === 'application/vnd.ms-excel' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ) {
+    return 'fa-file-excel';
+  }
+
+  // PowerPoint
+  if (
+    mimeType === 'application/vnd.ms-powerpoint' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  ) {
+    return 'fa-file-powerpoint';
+  }
+
+  // Default
+  return 'fa-file';
+};
+
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   const checkHealth = useCallback(async () => {
+    dispatch({ type: ActionTypes.SET_CHECKING_HEALTH, payload: true });
+    dispatch({ type: ActionTypes.SET_HEALTH_STATUS, payload: null });
     try {
       const response = await fetch(`${API_URL}/api/health`);
       const data = await response.json();
       dispatch({ type: ActionTypes.SET_HEALTH_STATUS, payload: `Backend status: ${data.status}` });
     } catch (err) {
       dispatch({ type: ActionTypes.SET_HEALTH_STATUS, payload: `Backend error: ${err.message}` });
+    } finally {
+      dispatch({ type: ActionTypes.SET_CHECKING_HEALTH, payload: false });
     }
   }, []);
 
@@ -195,21 +356,29 @@ function App() {
   }, []);
 
   const loadDriveFiles = useCallback(
-    async ({ loadMore = false } = {}) => {
+    async ({ loadMore = false, folderId = undefined } = {}) => {
       if (!state.currentUser) {
         dispatch({ type: ActionTypes.SET_ERROR, payload: 'Please sign in to view Google Drive' });
-        return;
+        return Promise.reject(new Error('User not authenticated'));
       }
       if (loadMore && !state.driveNextPageToken) {
-        return;
+        return Promise.reject(new Error('No more pages'));
+      }
+      // Block new requests during loading (except loadMore)
+      if (!loadMore && state.driveLoading) {
+        return Promise.reject(new Error('Already loading'));
       }
 
       dispatch({ type: ActionTypes.SET_DRIVE_LOADING, payload: true });
       dispatch({ type: ActionTypes.CLEAR_ERROR });
       try {
+        // If folderId is explicitly provided (including null for root), use it
+        // If not provided (undefined), use currentFolderId from state
+        const parentFolderId = folderId !== undefined ? folderId : (state.currentFolderId || null);
         const data = await filesApi.listDriveFiles({
           pageSize: 20,
           pageToken: loadMore ? state.driveNextPageToken : undefined,
+          parentFolderId: parentFolderId,
         });
         dispatch({ type: ActionTypes.SET_DRIVE_NEXT_PAGE_TOKEN, payload: data.next_page_token || null });
         if (loadMore) {
@@ -217,13 +386,15 @@ function App() {
         } else {
           dispatch({ type: ActionTypes.SET_DRIVE_FILES, payload: data.files });
         }
+        return data;
       } catch (err) {
         dispatch({ type: ActionTypes.SET_ERROR, payload: err.message });
+        throw err;
       } finally {
         dispatch({ type: ActionTypes.SET_DRIVE_LOADING, payload: false });
       }
     },
-    [state.currentUser, state.driveNextPageToken]
+    [state.currentUser, state.driveNextPageToken, state.currentFolderId, state.driveLoading]
   );
 
   const toggleDriveSelection = useCallback((fileId) => {
@@ -335,9 +506,283 @@ function App() {
   }, []);
 
   const isDriveSelectionDisabled = useMemo(
-    () => !state.currentUser || state.driveLoading || state.importing,
-    [state.currentUser, state.driveLoading, state.importing]
+    () => !state.currentUser || state.driveLoading || state.importing || state.uploadingToDrive,
+    [state.currentUser, state.driveLoading, state.importing, state.uploadingToDrive]
   );
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!state.uploadingToDrive) {
+      dispatch({ type: ActionTypes.SET_DRAG_OVER, payload: true });
+    }
+  }, [state.uploadingToDrive]);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only remove drag over if we're leaving the container (not entering a child)
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      dispatch({ type: ActionTypes.SET_DRAG_OVER, payload: false });
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dispatch({ type: ActionTypes.SET_DRAG_OVER, payload: false });
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    if (!state.currentUser) {
+      dispatch({ type: ActionTypes.SET_ERROR, payload: 'Please sign in to upload files to Google Drive' });
+      return;
+    }
+
+    // Check if Google Drive is connected
+    if (!state.currentUser.has_google_drive) {
+      dispatch({ 
+        type: ActionTypes.SET_ERROR, 
+        payload: 'Google Drive is not connected. Please sign in with Google to upload files to Google Drive.' 
+      });
+      return;
+    }
+
+    dispatch({ type: ActionTypes.SET_UPLOADING_TO_DRIVE, payload: true });
+    dispatch({ type: ActionTypes.CLEAR_ERROR });
+    dispatch({ type: ActionTypes.CLEAR_MESSAGE });
+
+    const uploadPromises = files.map(async (file) => {
+      try {
+        await filesApi.uploadToDrive(file, state.currentFolderId || null);
+        return { success: true, fileName: file.name };
+      } catch (err) {
+        // Check if error is about Google Drive not being connected or no upload permission
+        const errorMsg = err.message || '';
+        if (errorMsg.includes('403') || errorMsg.includes('No permission') || errorMsg.includes('not connected') || errorMsg.includes('grant upload permissions')) {
+          return { 
+            success: false, 
+            fileName: file.name, 
+            error: 'No permission to upload files. Please sign in again with Google to grant upload permissions.',
+            isGoogleNotConnected: true 
+          };
+        }
+        return { success: false, fileName: file.name, error: errorMsg };
+      }
+    });
+
+    const results = await Promise.all(uploadPromises);
+    const successful = results.filter(r => r.success);
+    const failed = results.filter(r => !r.success);
+    const googleNotConnected = failed.some(r => r.isGoogleNotConnected);
+
+    if (successful.length > 0) {
+      const count = successful.length;
+      dispatch({
+        type: ActionTypes.SET_MESSAGE,
+        payload: `${count} file${count > 1 ? 's' : ''} uploaded successfully to Google Drive`,
+      });
+      // Reload Drive files list
+      await loadDriveFiles({ loadMore: false });
+    }
+
+    if (failed.length > 0) {
+      // Special handling for Google Drive not connected or no upload permission
+      if (googleNotConnected) {
+        dispatch({
+          type: ActionTypes.SET_ERROR,
+          payload: 'No permission to upload files to Google Drive. Please sign in again with Google to grant upload permissions.',
+        });
+      } else {
+        const errorMessages = failed.map(f => `${f.fileName}: ${f.error}`).join('; ');
+        dispatch({
+          type: ActionTypes.SET_ERROR,
+          payload: `Failed to upload ${failed.length} file${failed.length > 1 ? 's' : ''}: ${errorMessages}`,
+        });
+      }
+    }
+
+    dispatch({ type: ActionTypes.SET_UPLOADING_TO_DRIVE, payload: false });
+  }, [state.currentUser, loadDriveFiles]);
+
+  const handleCreateFolderClick = useCallback(() => {
+    if (!state.currentUser?.has_google_drive) {
+      dispatch({ 
+        type: ActionTypes.SET_ERROR, 
+        payload: 'Google Drive is not connected. Please sign in with Google.' 
+      });
+      return;
+    }
+    dispatch({ 
+      type: ActionTypes.SET_CREATE_FOLDER_MODAL, 
+      payload: { isOpen: true, folderName: '' } 
+    });
+  }, [state.currentUser]);
+
+  const handleCreateFolderCancel = useCallback(() => {
+    dispatch({ type: ActionTypes.CLEAR_CREATE_FOLDER_MODAL });
+  }, []);
+
+  const handleCreateFolderNameChange = useCallback((e) => {
+    dispatch({ 
+      type: ActionTypes.SET_CREATE_FOLDER_MODAL, 
+      payload: { 
+        isOpen: true, 
+        folderName: e.target.value 
+      } 
+    });
+  }, []);
+
+  const handleCreateFolderConfirm = useCallback(async () => {
+    const folderName = state.createFolderModal?.folderName?.trim();
+    
+    if (!folderName || folderName.length === 0) {
+      dispatch({ 
+        type: ActionTypes.SET_ERROR, 
+        payload: 'Folder name cannot be empty' 
+      });
+      return;
+    }
+    
+    if (folderName.length > 255) {
+      dispatch({ 
+        type: ActionTypes.SET_ERROR, 
+        payload: 'Folder name is too long (max 255 characters)' 
+      });
+      return;
+    }
+    
+    // Validate forbidden characters
+    const forbiddenChars = /[\/\\?*:|"<>]/;
+    if (forbiddenChars.test(folderName)) {
+      dispatch({ 
+        type: ActionTypes.SET_ERROR, 
+        payload: 'Folder name contains invalid characters' 
+      });
+      return;
+    }
+    
+    dispatch({ type: ActionTypes.SET_CREATING_FOLDER, payload: true });
+    dispatch({ type: ActionTypes.CLEAR_ERROR });
+    dispatch({ type: ActionTypes.CLEAR_MESSAGE });
+    
+    try {
+      const result = await filesApi.createFolder(folderName, state.currentFolderId || null);
+      dispatch({ 
+        type: ActionTypes.SET_MESSAGE, 
+        payload: `Folder "${result.name}" created successfully` 
+      });
+      dispatch({ type: ActionTypes.CLEAR_CREATE_FOLDER_MODAL });
+      await loadDriveFiles({ loadMore: false });
+    } catch (err) {
+      const errorMsg = err.message || 'Unknown error';
+      if (errorMsg.includes('403') || errorMsg.includes('No permission')) {
+        dispatch({ 
+          type: ActionTypes.SET_ERROR, 
+          payload: 'No permission to create folders. Please sign in again with Google to grant upload permissions.' 
+        });
+      } else {
+        dispatch({ 
+          type: ActionTypes.SET_ERROR, 
+          payload: `Failed to create folder: ${errorMsg}` 
+        });
+      }
+    } finally {
+      dispatch({ type: ActionTypes.SET_CREATING_FOLDER, payload: false });
+    }
+  }, [state.createFolderModal, state.currentFolderId, loadDriveFiles]);
+
+  const handleFolderClick = useCallback((folderId, folderName) => {
+    // Block clicks during loading (debouncing/throttling)
+    if (state.driveLoading) {
+      return;
+    }
+    
+    // Update navigation only after successful load
+    loadDriveFiles({ loadMore: false, folderId }).then(() => {
+      dispatch({ 
+        type: ActionTypes.NAVIGATE_TO_FOLDER, 
+        payload: { id: folderId, name: folderName } 
+      });
+    }).catch(() => {
+      // On error, navigation is not updated
+    });
+  }, [loadDriveFiles, state.driveLoading]);
+
+  const handleNavigateBack = useCallback(() => {
+    // Block clicks during loading
+    if (state.driveLoading) {
+      return;
+    }
+    
+    if (state.folderNavigationStack.length === 0) {
+      return;
+    }
+    
+    const newStack = state.folderNavigationStack.slice(0, -1);
+    const newCurrentFolderId = newStack.length > 0 
+      ? newStack[newStack.length - 1].id 
+      : null;
+    
+    loadDriveFiles({ loadMore: false, folderId: newCurrentFolderId }).then(() => {
+      dispatch({ type: ActionTypes.NAVIGATE_BACK });
+    }).catch(() => {
+      // On error, navigation is not updated
+    });
+  }, [state.folderNavigationStack, state.driveLoading, loadDriveFiles]);
+
+  const handleNavigateToRoot = useCallback(() => {
+    // Block clicks during loading
+    if (state.driveLoading) {
+      return;
+    }
+    
+    dispatch({ type: ActionTypes.SET_DRIVE_FILES, payload: [] });
+    loadDriveFiles({ loadMore: false, folderId: null }).then(() => {
+      dispatch({ type: ActionTypes.RESET_FOLDER_NAVIGATION });
+    }).catch(() => {
+      // On error, navigation is not updated
+    });
+  }, [loadDriveFiles, state.driveLoading]);
+
+  const handleNavigateToFolder = useCallback((folderId, index) => {
+    // Block clicks during loading
+    if (state.driveLoading) {
+      return;
+    }
+    
+    // Navigate to specific folder from breadcrumbs
+    if (index === -1) {
+      handleNavigateToRoot();
+      return;
+    }
+    
+    const newStack = state.folderNavigationStack.slice(0, index + 1);
+    const targetFolder = newStack.length > 0 ? newStack[newStack.length - 1] : null;
+    
+    if (targetFolder) {
+      dispatch({ type: ActionTypes.SET_DRIVE_FILES, payload: [] });
+      loadDriveFiles({ loadMore: false, folderId: targetFolder.id }).then(() => {
+        // Update navigation only after successful load
+        dispatch({ 
+          type: ActionTypes.SET_FOLDER_NAVIGATION_STACK, 
+          payload: newStack 
+        });
+        dispatch({ 
+          type: ActionTypes.SET_CURRENT_FOLDER, 
+          payload: targetFolder.id 
+        });
+      }).catch(() => {
+        // On error, navigation is not updated
+      });
+    }
+  }, [state.folderNavigationStack, state.driveLoading, loadDriveFiles, handleNavigateToRoot]);
 
   return (
     <div className="app">
@@ -348,10 +793,33 @@ function App() {
             <p className="app-subtitle">Import and manage files from Google Drive</p>
           </div>
           <div className="app-actions">
-            <button onClick={checkHealth} className="secondary-button">
-              Check backend
+            <button 
+              onClick={checkHealth} 
+              className="secondary-button"
+              disabled={state.checkingHealth}
+            >
+              {state.checkingHealth ? (
+                <>
+                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: '8px' }}></i>
+                  Checking...
+                </>
+              ) : (
+                <>
+                  <i className="fa-solid fa-heartbeat" style={{ marginRight: '8px' }}></i>
+                  Check backend
+                </>
+              )}
             </button>
-            {state.healthStatus && <span className="hint-text">{state.healthStatus}</span>}
+            {state.healthStatus && (
+              <span className={`hint-text ${state.healthStatus.includes('error') ? 'error-text' : 'success-text'}`}>
+                {state.healthStatus.includes('error') ? (
+                  <i className="fa-solid fa-circle-exclamation" style={{ marginRight: '6px' }}></i>
+                ) : (
+                  <i className="fa-solid fa-circle-check" style={{ marginRight: '6px' }}></i>
+                )}
+                {state.healthStatus}
+              </span>
+            )}
           </div>
         </div>
         <Auth onAuthChange={handleAuthChange} />
@@ -367,12 +835,14 @@ function App() {
             <div className="alerts">
               {state.message && (
                 <div className="alert alert-success" onClick={() => dispatch({ type: ActionTypes.CLEAR_MESSAGE })}>
-                  {state.message}
+                  <i className="fa-solid fa-circle-check"></i>
+                  <span>{state.message}</span>
                 </div>
               )}
               {state.error && (
                 <div className="alert alert-error" onClick={() => dispatch({ type: ActionTypes.CLEAR_ERROR })}>
-                  {state.error}
+                  <i className="fa-solid fa-circle-exclamation"></i>
+                  <span>{state.error}</span>
                 </div>
               )}
             </div>
@@ -380,10 +850,18 @@ function App() {
 
           <section className="drive-section">
             <div className="section-header">
-              <h2>Google Drive</h2>
+              <h2>
+                Google Drive
+                {state.driveLoading && (
+                  <i className="fa-solid fa-spinner fa-spin loading-icon" style={{ marginLeft: '8px' }}></i>
+                )}
+              </h2>
               <div className="section-actions">
                 <button
-                  onClick={() => loadDriveFiles({ loadMore: false })}
+                  onClick={() => {
+                    dispatch({ type: ActionTypes.RESET_FOLDER_NAVIGATION });
+                    loadDriveFiles({ loadMore: false, folderId: null });
+                  }}
                   className="primary-button"
                   disabled={state.driveLoading}
                 >
@@ -405,11 +883,59 @@ function App() {
                 >
                   {state.importing ? 'Importing...' : `Import (${state.selectedDriveIds.length})`}
                 </button>
+                <button
+                  onClick={handleCreateFolderClick}
+                  className="primary-button"
+                  disabled={!state.currentUser?.has_google_drive || state.driveLoading || state.creatingFolder}
+                >
+                  Create folder
+                </button>
               </div>
             </div>
 
-            <div className="drive-list">
-              {state.driveFiles.length === 0 && !state.driveLoading ? (
+            {/* Breadcrumbs and Back button */}
+            {state.folderNavigationStack.length > 0 && (
+              <div className="breadcrumbs">
+                <button 
+                  className="breadcrumb-item" 
+                  onClick={() => !state.driveLoading && handleNavigateToFolder(null, -1)}
+                  disabled={state.driveLoading}
+                >
+                  Root
+                </button>
+                {state.folderNavigationStack.map((folder, index) => (
+                  <React.Fragment key={folder.id}>
+                    <span className="breadcrumb-separator">/</span>
+                    <button
+                      className="breadcrumb-item"
+                      onClick={() => !state.driveLoading && handleNavigateToFolder(folder.id, index)}
+                      disabled={state.driveLoading}
+                    >
+                      {folder.name}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+
+            <div
+              className={`drive-list ${state.dragOver ? 'drag-over' : ''} ${state.uploadingToDrive ? 'uploading' : ''}`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {state.uploadingToDrive && (
+                <div className="upload-progress">
+                  <p>Uploading files to Google Drive...</p>
+                </div>
+              )}
+              {!state.uploadingToDrive && state.dragOver && (
+                <div className="drag-over-hint">
+                  <p>Drop files here to upload to Google Drive</p>
+                </div>
+              )}
+              {state.driveFiles.length === 0 && !state.driveLoading && !state.uploadingToDrive && !state.dragOver ? (
                 <p className="muted-text">Google Drive files not loaded. Click "Load files".</p>
               ) : (
                 <ul>
@@ -419,23 +945,45 @@ function App() {
                     const isGoogleApp = file.mime_type && file.mime_type.startsWith('application/vnd.google-apps.');
                     const canImport = !isFolder && !isGoogleApp;
                     return (
-                      <li key={file.id} className={isSelected ? 'drive-item selected' : 'drive-item'}>
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={isDriveSelectionDisabled || !canImport}
-                            onChange={() => toggleDriveSelection(file.id)}
-                          />
-                          <span className="drive-item-name">
-                            {file.name}
-                            {isFolder && ' (Folder)'}
-                            {isGoogleApp && !isFolder && ' (Google App)'}
-                          </span>
-                        </label>
-                        <div className="drive-item-meta">
-                          <span>{isFolder ? 'Folder' : (file.mime_type || '—')}</span>
-                          <span>{isFolder || isGoogleApp ? '—' : (file.size_bytes ? `${file.size_bytes.toLocaleString()} bytes` : 'Size unknown')}</span>
+                      <li 
+                        key={file.id} 
+                        className={`drive-item ${isSelected ? 'selected' : ''} ${isFolder ? 'folder-clickable' : ''} ${state.driveLoading && isFolder ? 'folder-loading' : ''}`}
+                        onClick={isFolder && !state.driveLoading ? () => handleFolderClick(file.id, file.name) : undefined}
+                      >
+                        <div className="drive-item-content">
+                          {isFolder ? (
+                            <div className="folder-header">
+                              <i className="fa-solid fa-folder folder-icon"></i>
+                              <span className="drive-item-name">
+                                {file.name}
+                              </span>
+                              <i className="fa-solid fa-chevron-right folder-arrow"></i>
+                            </div>
+                          ) : (
+                            <div className="checkbox-container">
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  disabled={isDriveSelectionDisabled || !canImport}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    toggleDriveSelection(file.id);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                                <i className={`fa-solid ${getFileIcon(file.mime_type)} file-icon`}></i>
+                                <span className="drive-item-name">
+                                  {file.name}
+                                  {isGoogleApp && ' (Google App)'}
+                                </span>
+                              </label>
+                            </div>
+                          )}
+                          <div className="drive-item-meta">
+                            <span>{isFolder ? 'Folder' : (file.mime_type || '—')}</span>
+                            <span>{isFolder || isGoogleApp ? '—' : (file.size_bytes ? `${file.size_bytes.toLocaleString()} bytes` : 'Size unknown')}</span>
+                          </div>
                         </div>
                       </li>
                     );
@@ -458,11 +1006,14 @@ function App() {
               <ul className="imported-list">
                 {state.importedFiles.map((file) => (
                   <li key={file.id} className="imported-item">
-                    <div>
-                      <div className="imported-name">{file.original_name}</div>
-                      <div className="imported-meta">
-                        <span>{file.mime_type || 'Type unknown'}</span>
-                        <span>{file.size_bytes.toLocaleString()} bytes</span>
+                    <div className="imported-item-content">
+                      <i className={`fa-solid ${getFileIcon(file.mime_type)} file-icon`}></i>
+                      <div>
+                        <div className="imported-name">{file.original_name}</div>
+                        <div className="imported-meta">
+                          <span>{file.mime_type || 'Type unknown'}</span>
+                          <span>{file.size_bytes.toLocaleString()} bytes</span>
+                        </div>
                       </div>
                     </div>
                     <div className="imported-actions">
@@ -519,6 +1070,47 @@ function App() {
                 onClick={handleDeleteConfirm}
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create folder modal */}
+      {state.createFolderModal?.isOpen && (
+        <div className="modal-overlay" onClick={handleCreateFolderCancel}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Create Folder</h3>
+            <input
+              type="text"
+              placeholder="Folder name"
+              value={state.createFolderModal.folderName || ''}
+              onChange={handleCreateFolderNameChange}
+              disabled={state.creatingFolder}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !state.creatingFolder && state.createFolderModal?.folderName?.trim()) {
+                  handleCreateFolderConfirm();
+                }
+                if (e.key === 'Escape') {
+                  handleCreateFolderCancel();
+                }
+              }}
+            />
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                onClick={handleCreateFolderCancel}
+                disabled={state.creatingFolder}
+              >
+                Cancel
+              </button>
+              <button
+                className="accent-button"
+                onClick={handleCreateFolderConfirm}
+                disabled={state.creatingFolder || !state.createFolderModal.folderName?.trim()}
+              >
+                {state.creatingFolder ? 'Creating...' : 'Create'}
               </button>
             </div>
           </div>

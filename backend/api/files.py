@@ -4,7 +4,7 @@ import mimetypes
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response, File, UploadFile, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -20,6 +20,9 @@ from backend.app.services.google_drive import (
     get_file_metadata,
     list_drive_files,
     refresh_access_token,
+    upload_file_to_drive,
+    check_drive_upload_permission,
+    create_drive_folder,
 )
 from datetime import datetime, timedelta, timezone
 
@@ -60,6 +63,11 @@ class FileOut(BaseModel):
 
 class ImportFilesRequest(BaseModel):
     file_ids: List[str] = Field(..., min_length=1, max_length=20)
+
+
+class CreateFolderRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_folder_id: Optional[str] = None
 
 
 class ImportSkippedItem(BaseModel):
@@ -132,8 +140,8 @@ def _serialize_file(file_obj: File) -> Dict[str, Any]:
 def _ensure_drive_tokens(user: User) -> None:
     if not user.google_access_token:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google Drive access token is missing for this user.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Google Drive is not connected. Please sign in with Google to upload files to Google Drive.",
         )
 
 
@@ -242,6 +250,7 @@ async def list_imported_files(
 async def list_drive_files_endpoint(
     page_size: int = Query(20, ge=1, le=100),
     page_token: Optional[str] = Query(None),
+    parent_folder_id: Optional[str] = Query(None, description="Parent folder ID (None or 'root' for root folder)"),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -256,6 +265,7 @@ async def list_drive_files_endpoint(
         current_user.google_token_expires_at,
         page_size=page_size,
         page_token=page_token,
+        parent_folder_id=parent_folder_id,
     )
 
     files: List[DriveFileOut] = []
@@ -285,6 +295,227 @@ async def list_drive_files_endpoint(
     return DriveFilesResponse(
         files=files,
         next_page_token=drive_listing.get("next_page_token"),
+    )
+
+
+@router.post("/drive/upload", response_model=DriveFileOut)
+async def upload_file_to_drive_endpoint(
+    file: UploadFile = File(),
+    parent_folder_id: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Uploads a file to Google Drive.
+    """
+    _ensure_drive_tokens(current_user)
+    
+    # Refresh tokens if needed
+    await _refresh_and_save_user_tokens(current_user, session)
+    
+    # Check if user has upload permission
+    credentials = create_credentials_from_tokens(
+        current_user.google_access_token,
+        current_user.google_refresh_token,
+        current_user.google_token_expires_at,
+    )
+    credentials = refresh_access_token(credentials)
+    
+    if not check_drive_upload_permission(credentials):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No permission to upload files to Google Drive. Please sign in again with Google to grant upload permissions.",
+        )
+    
+    # Read file content
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is empty",
+        )
+    
+    # Determine MIME type
+    mime_type = file.content_type
+    if not mime_type:
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(file.filename or "")
+    
+    # Upload to Google Drive
+    try:
+        drive_file = await upload_file_to_drive(
+            access_token=current_user.google_access_token,
+            refresh_token=current_user.google_refresh_token,
+            expires_at=current_user.google_token_expires_at,
+            file_content=file_content,
+            file_name=file.filename or "untitled",
+            mime_type=mime_type,
+            parent_folder_id=parent_folder_id if parent_folder_id and parent_folder_id != "root" else None,
+        )
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "unauthorized" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google Drive authorization error. Please try logging in again",
+            )
+        elif "403" in error_msg or "forbidden" in error_msg.lower() or "insufficient permission" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No permission to upload files to Google Drive. Please sign in again with Google to grant upload permissions.",
+            )
+        elif "quota" in error_msg.lower() or "storage" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Google Drive storage quota exceeded",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error uploading file to Google Drive: {error_msg}",
+            )
+    
+    # Convert to DriveFileOut format
+    size_raw = drive_file.get("size")
+    size_bytes = int(size_raw) if size_raw is not None else None
+    drive_file_id = drive_file.get("id")
+    raw_web_view_link = drive_file.get("webViewLink")
+    valid_web_view_link = _get_valid_web_view_link(raw_web_view_link, drive_file_id)
+    
+    return DriveFileOut(
+        id=drive_file_id,
+        name=drive_file.get("name"),
+        mime_type=drive_file.get("mimeType"),
+        size_bytes=size_bytes,
+        modified_time=drive_file.get("modifiedTime"),
+        web_view_link=valid_web_view_link,
+        is_folder=False,
+    )
+
+
+class DrivePermissionsResponse(BaseModel):
+    has_read_permission: bool
+    has_upload_permission: bool
+    scopes: List[str]
+
+
+@router.get("/drive/permissions", response_model=DrivePermissionsResponse)
+async def check_drive_permissions(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Checks Google Drive permissions for the current user.
+    """
+    _ensure_drive_tokens(current_user)
+    
+    # Refresh tokens if needed
+    await _refresh_and_save_user_tokens(current_user, session)
+    
+    credentials = create_credentials_from_tokens(
+        current_user.google_access_token,
+        current_user.google_refresh_token,
+        current_user.google_token_expires_at,
+    )
+    credentials = refresh_access_token(credentials)
+    
+    user_scopes = credentials.scopes or []
+    
+    has_read_permission = (
+        "https://www.googleapis.com/auth/drive.readonly" in user_scopes or
+        "https://www.googleapis.com/auth/drive" in user_scopes
+    )
+    
+    has_upload_permission = check_drive_upload_permission(credentials)
+    
+    return DrivePermissionsResponse(
+        has_read_permission=has_read_permission,
+        has_upload_permission=has_upload_permission,
+        scopes=user_scopes,
+    )
+
+
+@router.post("/drive/folder", response_model=DriveFileOut)
+async def create_drive_folder_endpoint(
+    payload: CreateFolderRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Creates a folder in Google Drive.
+    """
+    _ensure_drive_tokens(current_user)
+    
+    # Refresh tokens if needed
+    await _refresh_and_save_user_tokens(current_user, session)
+    
+    # Check if user has upload permission
+    credentials = create_credentials_from_tokens(
+        current_user.google_access_token,
+        current_user.google_refresh_token,
+        current_user.google_token_expires_at,
+    )
+    credentials = refresh_access_token(credentials)
+    
+    if not check_drive_upload_permission(credentials):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No permission to create folders in Google Drive. Please sign in again with Google to grant upload permissions.",
+        )
+    
+    # Validate folder name
+    folder_name = payload.name.strip()
+    if not folder_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Folder name cannot be empty",
+        )
+    
+    # Create folder in Google Drive
+    try:
+        drive_folder = await create_drive_folder(
+            access_token=current_user.google_access_token,
+            refresh_token=current_user.google_refresh_token,
+            expires_at=current_user.google_token_expires_at,
+            folder_name=folder_name,
+            parent_folder_id=payload.parent_folder_id,
+        )
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "unauthorized" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google Drive authorization error. Please try logging in again",
+            )
+        elif "403" in error_msg or "forbidden" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No permission to create folders in Google Drive",
+            )
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Parent folder not found",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating folder in Google Drive: {error_msg}",
+            )
+    
+    # Convert to DriveFileOut format
+    drive_folder_id = drive_folder.get("id")
+    raw_web_view_link = drive_folder.get("webViewLink")
+    valid_web_view_link = _get_valid_web_view_link(raw_web_view_link, drive_folder_id)
+    
+    return DriveFileOut(
+        id=drive_folder_id,
+        name=drive_folder.get("name"),
+        mime_type=drive_folder.get("mimeType"),
+        size_bytes=None,
+        modified_time=drive_folder.get("modifiedTime"),
+        web_view_link=valid_web_view_link,
+        is_folder=True,
     )
 
 

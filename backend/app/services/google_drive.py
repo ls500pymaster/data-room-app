@@ -257,6 +257,31 @@ def get_drive_service(credentials: Credentials):
     return build("drive", "v3", credentials=credentials)
 
 
+def check_drive_upload_permission(credentials: Credentials) -> bool:
+    """
+    Checks if credentials have permission to upload files to Google Drive.
+    
+    Args:
+        credentials: Google OAuth credentials
+        
+    Returns:
+        True if has upload permission, False otherwise
+    """
+    required_scopes = [
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    
+    user_scopes = credentials.scopes or []
+    
+    # Check if any required scope is present
+    for required_scope in required_scopes:
+        if required_scope in user_scopes:
+            return True
+    
+    return False
+
+
 async def list_drive_files(
     access_token: str,
     refresh_token: Optional[str],
@@ -264,6 +289,7 @@ async def list_drive_files(
     page_size: int = 100,
     page_token: Optional[str] = None,
     query: Optional[str] = None,
+    parent_folder_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Gets list of files from Google Drive.
@@ -275,6 +301,7 @@ async def list_drive_files(
         page_size: Number of files per page
         page_token: Token for pagination
         query: Query filter (e.g., "mimeType='application/pdf'")
+        parent_folder_id: Optional parent folder ID (None or 'root' for root folder)
     
     Returns:
         Dictionary with files and next_page_token
@@ -291,6 +318,13 @@ async def list_drive_files(
             "fields": "nextPageToken, files(id, name, mimeType, size, modifiedTime, webViewLink)",
             "q": "trashed=false",  # Only non-deleted files
         }
+        
+        # Add parent folder filter if specified
+        if parent_folder_id and parent_folder_id != "root":
+            params["q"] = f"{params['q']} and '{parent_folder_id}' in parents"
+        else:
+            # For root folder, show files that have 'root' in parents
+            params["q"] = f"{params['q']} and 'root' in parents"
         
         if query:
             params["q"] = f"{params['q']} and {query}"
@@ -375,6 +409,115 @@ async def get_file_metadata(
         return file_metadata
     except HttpError as e:
         raise Exception(f"Error getting file metadata from Google Drive: {e}")
+
+
+async def upload_file_to_drive(
+    access_token: str,
+    refresh_token: Optional[str],
+    expires_at: Optional[datetime],
+    file_content: bytes,
+    file_name: str,
+    mime_type: Optional[str] = None,
+    parent_folder_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Uploads file to Google Drive.
+    
+    Args:
+        access_token: Google access token
+        refresh_token: Google refresh token
+        expires_at: Access token expiration time
+        file_content: File content as bytes
+        file_name: Name of the file
+        mime_type: MIME type of the file (optional)
+        parent_folder_id: Optional parent folder ID (None for root)
+    
+    Returns:
+        Dictionary with file metadata (id, name, mimeType, etc.)
+    """
+    credentials = create_credentials_from_tokens(access_token, refresh_token, expires_at)
+    credentials = refresh_access_token(credentials)
+    
+    try:
+        service = get_drive_service(credentials)
+        
+        # Prepare file metadata
+        file_metadata = {
+            'name': file_name,
+        }
+        if mime_type:
+            file_metadata['mimeType'] = mime_type
+        
+        # Add parent folder if specified
+        if parent_folder_id and parent_folder_id != "root":
+            file_metadata['parents'] = [parent_folder_id]
+        
+        # Create file in Google Drive
+        from googleapiclient.http import MediaIoBaseUpload
+        import io
+        
+        media = MediaIoBaseUpload(
+            io.BytesIO(file_content),
+            mimetype=mime_type or 'application/octet-stream',
+            resumable=True
+        )
+        
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name, mimeType, size, modifiedTime, createdTime, webViewLink'
+        ).execute()
+        
+        return file
+    except HttpError as e:
+        raise Exception(f"Error uploading file to Google Drive: {e}")
+
+
+async def create_drive_folder(
+    access_token: str,
+    refresh_token: Optional[str],
+    expires_at: Optional[datetime],
+    folder_name: str,
+    parent_folder_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Creates a folder in Google Drive.
+    
+    Args:
+        access_token: Google access token
+        refresh_token: Google refresh token
+        expires_at: Access token expiration time
+        folder_name: Name of the folder
+        parent_folder_id: Optional parent folder ID (default: root)
+    
+    Returns:
+        Dictionary with folder metadata (id, name, mimeType, etc.)
+    """
+    credentials = create_credentials_from_tokens(access_token, refresh_token, expires_at)
+    credentials = refresh_access_token(credentials)
+    
+    try:
+        service = get_drive_service(credentials)
+        
+        # Prepare folder metadata
+        folder_metadata = {
+            'name': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder',
+        }
+        
+        # Add parent folder if specified
+        if parent_folder_id:
+            folder_metadata['parents'] = [parent_folder_id]
+        
+        # Create folder in Google Drive
+        folder = service.files().create(
+            body=folder_metadata,
+            fields='id, name, mimeType, modifiedTime, createdTime, webViewLink'
+        ).execute()
+        
+        return folder
+    except HttpError as e:
+        raise Exception(f"Error creating folder in Google Drive: {e}")
 
 
 def _force_credentials_utc(credentials: Credentials) -> Credentials:
